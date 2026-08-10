@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Proyectos · Recorte</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ APP_SUBPATH }}{{ url_for('static', filename='css/projects.css') }}?v=10">
+<script>window.APP_BASE = "{{ APP_SUBPATH }}";</script>
+</head>
+<body>
+
+<div class="projects-page">
+
+  <header class="projects-header">
+    <div class="brand">
+      <span class="brand-mark">✂</span>
+      <h1>Recorte</h1>
+      <span class="brand-sub">Recorta · Etiqueta · Fusiona</span>
+    </div>
+  </header>
+
+  <main class="projects-main">
+
+    <div class="intro">
+      <h2>¿Qué proyecto quieres abrir?</h2>
+      <p>Los proyectos son carpetas que contienen tu carpeta de <span class="mono">images/</span> de entrada, las anotaciones (opcional) y los recortes generados en <span class="mono">crops/</span>.</p>
+    </div>
+
+    <div class="project-cards">
+
+      <!-- Abrir -->
+      <section class="project-card" id="openCard">
+        <div class="card-icon">📂</div>
+        <h3>Abrir proyecto</h3>
+        <p>Selecciona una carpeta de proyecto existente para continuar trabajando con ella.</p>
+        <button class="btn btn-primary" id="openProjectBtn">Seleccionar carpeta…</button>
+      </section>
+
+      <!-- Crear -->
+      <section class="project-card" id="createCard">
+        <div class="card-icon">✨</div>
+        <h3>Crear proyecto</h3>
+        <p>Se creará una carpeta con imágenes, anotaciones y estructura MVTec-AD lista para entrenar.</p>
+
+        <label class="field-label" for="projectName">Nombre del proyecto</label>
+        <input type="text" id="projectName" class="small" placeholder="mi_proyecto" autocomplete="off">
+
+        <label class="field-label" for="projectParent">Ubicación</label>
+        <div class="path-picker">
+          <input type="text" id="projectParent" class="mono small" spellcheck="false" readonly>
+          <button class="icon-btn" id="browseParentBtn" type="button" title="Seleccionar carpeta donde crearlo" aria-label="Seleccionar carpeta">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6.5h6l2 2h10v9.5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6.5Zm0 3h18M3 6.5v-.5a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v1.5"/></svg>
+          </button>
+        </div>
+
+        <label class="field-label" for="objectClass">Clase de objeto (opcional)</label>
+        <input type="text" id="objectClass" class="small" placeholder="p. ej. hazelnut" autocomplete="off">
+
+        <button class="btn btn-primary" id="createProjectBtn" disabled>Crear proyecto</button>
+      </section>
+
+    </div>
+
+    <div class="recent-block" id="recentBlock" style="display:none;">
+      <h4>Recientes</h4>
+      <ul class="recent-list" id="recentList"></ul>
+    </div>
+
+    <div class="status" id="status"></div>
+
+  </main>
+
+</div>
+
+<script src="{{ APP_SUBPATH }}{{ url_for('static', filename='js/common.js') }}?v=11"></script>
+<script src="{{ APP_SUBPATH }}{{ url_for('static', filename='js/projects.js') }}?v=11"></script>
+</body>
+</html>

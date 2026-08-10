@@ -1,0 +1,29 @@
+# ============================================================
+# DefectFill Web App — Docker Compose (Producción con Nginx)
+# ============================================================
+# Uso:
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+#
+# Añade un reverse proxy Nginx delante de la app FastAPI con:
+#   - Compresión gzip
+#   - Cacheo de archivos estáticos
+#   - Headers de seguridad básicos
+#   - Limitación de tamaño de subida (200 MB para datasets grandes)
+# ============================================================
+
+services:
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: defectfill-nginx
+    restart: unless-stopped
+    ports:
+      - "${NGINX_PORT:-80}:80"
+    volumes:
+      - ./docker/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - defectfill-frontend-cache:/var/cache/nginx
+    depends_on:
+      defectfill:
+        condition: service_healthy
+
+volumes:
+  defectfill-frontend-cache:

@@ -1,0 +1,42 @@
+# ============================================================
+# .dockerignore — excluir lo que no necesita entrar en la imagen
+# ============================================================
+
+# Volúmenes montados en runtime (no copiar)
+data/
+output/
+generated/
+hf-cache/
+
+# Docker
+.docker/
+*.tar
+*.tar.gz
+
+# Git
+.git/
+.gitignore
+
+# Documentación
+*.md
+LICENSE
+
+# Entorno local
+venv/
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+.env
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Ficheros de desarrollo
+docker-compose*.yml
+.env.example

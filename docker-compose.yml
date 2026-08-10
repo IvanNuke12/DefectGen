@@ -1,0 +1,127 @@
+﻿# ============================================================
+# DefectGen — Stack unificado: HMI de preprocesado + Entrenamiento DefectFill
+# ============================================================
+# Sistema único gobernado por Docker con UNA sola entrada:
+#
+#   http://localhost/          -> Portal con pestañas (Preprocesado | Entrenamiento)
+#   http://localhost/hmi/      -> crop-hmi (preprocesado, CPU)
+#   http://localhost/train/    -> defectfill (entrenamiento, GPU)
+#
+# Nginx (portal) expone únicamente el puerto :80; las apps NO publican
+# puerto al host: solo son alcanzables a través del proxy por subruta
+# (same-origin). Para volver a exponerlas directamente, descomentar la
+# sección `ports` correspondiente (8091 / 8500).
+#
+# Datos persistentes (bind mounts, todo dentro de esta carpeta):
+#   ./projects      -> proyectos compartidos (dataset MVTec-AD + HMI)
+#   ./crop-state    -> estado de crop-hmi (config, recientes, miniaturas)
+#   ./hf-cache      -> caché del modelo Hugging Face (~5 GB)
+#   ./hf-cache-torch-> pesos de torchvision/LPIPS (~550 MB)
+#   ./crop-hmi      -> código del HMI de preprocesado (contexto de build)
+#   ./defectfill    -> código de la app DefectFill (contexto de build)
+#
+# Arranque:
+#   docker compose up -d --build
+# ============================================================
+
+name: defectgen
+
+services:
+
+  # ------------------------------------------------------------------
+  # 1. Preprocesado — crop-hmi (Flask, CPU)
+  # ------------------------------------------------------------------
+  crop-hmi:
+    build:
+      context: ./crop-hmi
+      dockerfile: Dockerfile
+    container_name: defectgen-crop-hmi
+    restart: unless-stopped
+    # (sin puertos publicados: se sirve por subruta /hmi/ vía nginx)
+    # ports:
+    #   - "${CROP_PORT:-8091}:5000"
+    environment:
+      - HOST=0.0.0.0
+      - PORT=5000
+      - OPEN_BROWSER=0
+      - STATE_DIR=/app/state
+      # Prefijo de subruta para plantillas y JS (same-origin via nginx)
+      - APP_SUBPATH=/hmi
+      # Raíces visibles en el navegador de carpetas: proyectos + generados
+      - PROJECTS_ROOTS=/data/projects;/data/generated
+    volumes:
+      - ./projects:/data/projects
+      - ./crop-state:/app/state
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:5000/api/browse', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      start_period: 15s
+      retries: 3
+
+  # ------------------------------------------------------------------
+  # 2. Entrenamiento — defectfill (FastAPI, GPU)
+  # ------------------------------------------------------------------
+  defectfill:
+    build:
+      context: ./defectfill
+      dockerfile: Dockerfile
+    container_name: defectgen-defectfill
+    restart: unless-stopped
+    # (sin puertos publicados: se sirve por subruta /train/ vía nginx)
+    # ports:
+    #   - "${HOST_PORT:-8500}:8000"
+    environment:
+      - HOST=0.0.0.0
+      - PORT=8000
+      - NVIDIA_VISIBLE_DEVICES=all
+      - PYTHONUNBUFFERED=1
+      - HF_TOKEN=${HF_TOKEN:-}
+      - PROJECTS_ROOT=/app/projects
+      # Caché de pesos torchvision/LPIPS (vgg16 etc.) persistente: evita
+      # re-descargar ~553 MB en cada recreación del contenedor.
+      - TORCH_HOME=/app/.cache/torch
+    volumes:
+      # Proyectos/HMI compartidos (estructura MVTec-AD)
+      - ./projects:/app/projects
+      # Cache de Hugging Face
+      - ./hf-cache:/app/.cache/huggingface
+      # Cache de torchvision (pesos vgg16 de LPIPS)
+      - ./hf-cache-torch:/app/.cache/torch
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
+      interval: 30s
+      timeout: 10s
+      start_period: 60s
+      retries: 3
+
+  # ------------------------------------------------------------------
+  # 3. Portal — entrada única en :80 con pestañas
+  # ------------------------------------------------------------------
+  portal:
+    image: nginx:1.27-alpine
+    container_name: defectgen-portal
+    restart: unless-stopped
+    ports:
+      - "${NGINX_PORT:-80}:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./portal:/usr/share/nginx/html:ro
+    depends_on:
+      crop-hmi:
+        condition: service_healthy
+      defectfill:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/"]
+      interval: 30s
+      timeout: 10s
+      start_period: 15s
+      retries: 3

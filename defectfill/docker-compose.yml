@@ -1,0 +1,67 @@
+# ============================================================
+# DefectFill Web App — Docker Compose
+# ============================================================
+# Uso:
+#   docker compose up -d          # arranca la app
+#   docker compose logs -f        # sigue los logs
+#   docker compose down            # para y elimina contenedores
+#
+# NOTA IMPORTANTE: todos los datos (datasets, checkpoints, resultados
+# y caché del modelo) se guardan en CARPETAS LOCALES DE TU PC mediante
+# bind mounts. Las encontrarás junto a este docker-compose.yml:
+#   ./data        -> datasets subidos desde la UI
+#   ./output      -> checkpoints de entrenamiento
+#   ./generated   -> imágenes generadas por inferencia
+#   ./hf-cache    -> caché del modelo Hugging Face (~5 GB)
+# Si quieres guardarlos en otra ubicación, cambia la ruta del bind mount
+# (por ejemplo: C:/Users/TU_USUARIO/DefectFillData:/app/data).
+# ============================================================
+# Requisitos:
+#   - Docker Engine >= 23.0
+#   - NVIDIA Container Toolkit instalado en el host
+#     (https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html)
+#   - Driver NVIDIA >= 525.x
+# ============================================================
+
+services:
+  defectfill:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: defectfill-webapp
+    restart: unless-stopped
+    ports:
+      - "${HOST_PORT:-8500}:8000"
+    environment:
+      - HOST=0.0.0.0
+      - PORT=8000
+      - NVIDIA_VISIBLE_DEVICES=all          # pasa todas las GPUs al contenedor
+      - PYTHONUNBUFFERED=1
+      - HF_TOKEN=${HF_TOKEN:-}              # opcional: token de Hugging Face (definirlo en .env, NUNCA hardcodearlo)
+    volumes:
+      # Código de la app montado en vivo: los cambios en backend/ y frontend/
+      # se aplican al SIGUIENTE job sin reconstruir la imagen (solo recrear).
+      # El proceso ya en marcha no se ve afectado.
+      - ./backend:/app/backend
+      - ./frontend:/app/frontend
+      # Datos del usuario (datasets subidos desde la UI) -> guardados en tu PC
+      - ./data:/app/data
+      # Checkpoints de entrenamiento -> guardados en tu PC
+      - ./output:/app/output
+      # Imágenes generadas por inferencia -> guardadas en tu PC
+      - ./generated:/app/generated
+      # Cache de modelos Hugging Face (SD2-Inpainting pesa ~5 GB)
+      - ./hf-cache:/app/.cache/huggingface
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
+      interval: 30s
+      timeout: 10s
+      start_period: 60s
+      retries: 3

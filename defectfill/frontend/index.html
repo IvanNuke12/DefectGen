@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DefectFill — Consola de inspección</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="static/style.css?v=7">
+<script>window.APP_BASE = "/train";</script>
+</head>
+<body>
+
+<div class="app">
+
+  <!-- ===================== HEADER ===================== -->
+  <header class="header">
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 40 40" width="30" height="30">
+          <rect x="2" y="2" width="36" height="36" fill="none" stroke="currentColor" stroke-width="2"/>
+          <path d="M2 2 L10 2 M2 2 L2 10" stroke="currentColor" stroke-width="2.5" fill="none"/>
+          <path d="M38 38 L30 38 M38 38 L38 30" stroke="currentColor" stroke-width="2.5" fill="none"/>
+          <circle cx="20" cy="20" r="6" fill="currentColor" opacity="0.85"/>
+        </svg>
+      </span>
+      <div class="brand-text">
+        <span class="brand-title">DefectFill</span>
+      </div>
+    </div>
+
+    <nav class="tabs" id="tabs">
+      <button class="tab active" data-tab="train" type="button">Entrenamiento</button>
+      <button class="tab" data-tab="eval" type="button">Evaluación</button>
+      <button class="tab" data-tab="infer" type="button">Inferencia</button>
+      <button class="tab" data-tab="results" type="button">Resultados</button>
+      <button class="tab" data-tab="system" type="button">Sistema</button>
+    </nav>
+
+    <div class="header-right">
+      <div class="sys-pill" id="sysPill" title="Estado del entorno de ejecución">
+        <span class="dot" id="sysDot"></span>
+        <span id="sysLabel">comprobando GPU…</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- ===================== MAIN ===================== -->
+  <main class="main">
+
+    <!-- ---------- TRAIN ---------- -->
+    <section class="panel active" id="panel-train">
+      <div class="grid-split">
+        <form id="formTrain" class="card">
+          <h3>Configuración</h3>
+          <div class="field">
+            <label>Proyecto activo</label>
+            <div class="active-project-readonly" id="trainActiveProject">—</div>
+          </div>
+          <div class="field">
+            <label>Tipo de defecto (opcional, vacío = todos)</label>
+            <select name="defect_type" id="trainDefectType"></select>
+          </div>
+          <div class="field">
+            <label>Nombre de la ejecución</label>
+            <input type="text" name="run_name" placeholder="p.ej. concrete-crack-v1">
+          </div>
+
+          <div class="field-row">
+            <div class="field"><label>Pasos totales</label><input type="number" name="max_train_steps" value="2000" min="10"></div>
+            <div class="field"><label>Batch size</label><input type="number" name="batch_size" value="2" min="1"></div>
+          </div>
+          <div class="field-row">
+            <div class="field"><label>LoRA rank</label><input type="number" name="lora_rank" value="8" min="1"></div>
+            <div class="field"><label>LoRA alpha</label><input type="number" name="lora_alpha" value="16" min="1"></div>
+          </div>
+          <div class="field-row">
+            <div class="field"><label>LR text encoder</label><input type="number" name="text_encoder_lr" value="0.00004" step="0.00001"></div>
+            <div class="field"><label>LR UNet</label><input type="number" name="unet_lr" value="0.0002" step="0.0001"></div>
+          </div>
+          <div class="field-row">
+            <div class="field"><label>Warmup steps</label><input type="number" name="lr_warmup_steps" value="100" min="0"></div>
+            <div class="field"><label>Guardar cada</label><input type="number" name="save_steps" value="500" min="1"></div>
+          </div>
+          <div class="field-row">
+            <div class="field"><label>λ defecto</label><input type="number" name="lambda_defect" value="0.5" step="0.05"></div>
+            <div class="field"><label>λ objeto</label><input type="number" name="lambda_obj" value="0.2" step="0.05"></div>
+            <div class="field"><label>λ atención</label><input type="number" name="lambda_attn" value="0.05" step="0.01"></div>
+          </div>
+          <div class="field">
+            <label class="checkbox"><input type="checkbox" name="dilate_mask"> Dilatar máscaras antes de entrenar</label>
+          </div>
+
+          <button type="submit" class="btn btn-primary btn-block" id="btnStartTrain">Iniciar entrenamiento</button>
+          <p class="hint">Lanza <code>train.py</code> tal cual el repositorio original, como subproceso. Requiere GPU con suficiente VRAM y conexión para descargar <code>stable-diffusion-2-inpainting</code> la primera vez.</p>
+        </form>
+
+        <div class="card monitor-card">
+          <div class="card-head-row">
+            <h3>Progreso en vivo</h3>
+            <span class="status-badge idle" id="trainStatusBadge">sin ejecución</span>
+          </div>
+
+          <div class="progress-block">
+            <div class="progress-numbers">
+              <span class="mono big" id="trainStepLabel">0 / 0</span>
+              <span class="mono eta" id="trainEtaLabel">ETA —</span>
+            </div>
+            <div class="progress-bar"><div class="progress-fill" id="trainProgressFill"></div></div>
+          </div>
+
+          <div class="chart-grid">
+            <div class="chart-cell">
+              <div class="chart-head"><span class="chart-label">L_def</span><span class="chart-value mono" id="chartValDef">—</span></div>
+              <canvas id="chartLossDef" class="loss-chart"></canvas>
+            </div>
+            <div class="chart-cell">
+              <div class="chart-head"><span class="chart-label">L_obj</span><span class="chart-value mono" id="chartValObj">—</span></div>
+              <canvas id="chartLossObj" class="loss-chart"></canvas>
+            </div>
+            <div class="chart-cell">
+              <div class="chart-head"><span class="chart-label">L_attn</span><span class="chart-value mono" id="chartValAttn">—</span></div>
+              <canvas id="chartLossAttn" class="loss-chart"></canvas>
+            </div>
+            <div class="chart-cell">
+              <div class="chart-head"><span class="chart-label">L_total</span><span class="chart-value mono" id="chartValTotal">—</span></div>
+              <canvas id="chartLossTotal" class="loss-chart"></canvas>
+            </div>
+          </div>
+
+          <div class="log-console" id="trainLog"><p class="log-placeholder">El registro del proceso aparecerá aquí al iniciar el entrenamiento…</p></div>
+
+          <button class="btn btn-danger btn-small" id="btnStopTrain" disabled>Detener entrenamiento</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ---------- EVAL ---------- -->
+    <section class="panel" id="panel-eval">
+      <div class="grid-split">
+        <form id="formValidate" class="card">
+          <h3>Configuración</h3>
+          <div class="field">
+            <label>Run de entrenamiento</label>
+            <select name="run" id="valRun" required></select>
+          </div>
+          <div class="field">
+            <label>Tipo de defecto</label>
+            <select name="defect_type" id="valDefectType" required></select>
+          </div>
+          <div class="field">
+            <label>Imágenes del lote</label>
+            <input type="number" name="num_eval_images" value="4" min="2" max="5">
+            <p class="hint">2-5 recomendado: lote fijo determinista por checkpoint.</p>
+          </div>
+          <div class="field">
+            <label>Umbral IC-LPIPS</label>
+            <input type="number" name="min_ic_lpips" value="0.05" step="0.01" min="0">
+            <p class="hint">Diversidad mínima exigida (evita colapso del generador).</p>
+          </div>
+          <div class="field">
+            <label>Pasos de difusión</label>
+            <input type="number" name="steps" value="50" min="1">
+          </div>
+          <div class="field">
+            <label>Guidance scale</label>
+            <input type="number" name="guidance_scale" value="2.0" step="0.1">
+          </div>
+          <div class="field">
+            <label>Prompt (opcional)</label>
+            <input type="text" name="prompt" placeholder="A can with <defect>" spellcheck="false">
+          </div>
+          <div class="field-row">
+            <button class="btn btn-primary" id="btnStartValidate">Validar checkpoints</button>
+            <button class="btn btn-danger btn-small" id="btnStopValidate" disabled>Detener</button>
+          </div>
+          <p class="hint">Para cada checkpoint del run se genera un lote fijo con semillas deterministas (mismas imágenes buenas × máscaras) y se mide KID frente a las defectuosas reales y IC-LPIPS (diversidad). Se selecciona el de menor KID con IC-LPIPS por encima del umbral.</p>
+        </form>
+
+        <div class="card monitor-card">
+          <div class="card-head-row">
+            <h3>Progreso de validación</h3>
+            <span class="status-badge idle" id="valStatusBadge">sin ejecución</span>
+          </div>
+          <div class="progress-block">
+            <div class="progress-numbers"><span class="mono big" id="valStepLabel">0 / 0</span></div>
+            <div class="progress-bar"><div class="progress-fill" id="valProgressFill"></div></div>
+          </div>
+          <div class="log-console" id="valLog"><p class="log-placeholder">El registro de la validación aparecerá aquí…</p></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3>Resultado</h3>
+        <div id="valResults">
+          <p class="empty-state">Todavía no hay validaciones para este run.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ---------- INFER ---------- -->
+    <section class="panel" id="panel-infer">
+      <div class="grid-split">
+        <form id="formInfer" class="card">
+          <h3>Configuración</h3>
+          <div class="field">
+            <label>Checkpoint entrenado</label>
+            <select name="checkpoint" id="inferCheckpoint" required></select>
+          </div>
+          <div class="field-row">
+            <div class="field"><label>Proyecto activo</label><div class="active-project-readonly" id="inferActiveProject">—</div></div>
+            <div class="field"><label>Tipo de defecto</label><select name="defect_type" id="inferDefectType" required></select></div>
+          </div>
+          <div class="field-row">
+            <div class="field"><label>Imágenes a generar</label><input type="number" name="total_images" value="6" min="1"></div>
+            <div class="field"><label>Candidatos por imagen</label><input type="number" name="num_samples" value="8" min="1"></div>
+          </div>
+          <div class="field-row">
+            <div class="field"><label>Pasos de difusión</label><input type="number" name="steps" value="50" min="1"></div>
+            <div class="field"><label>Guidance scale</label><input type="number" name="guidance_scale" value="2.0" step="0.1"></div>
+          </div>
+          <div class="field">
+            <label>Batch size (generación en paralelo)</label>
+            <input type="number" name="batch_size" value="4" min="1">
+            <p class="hint">Candidatos que se generan a la vez por GPU. Sube si tienes VRAM de sobra (más rápido), baja a 1–2 si la GPU va escasa de memoria.</p>
+          </div>
+          <div class="field">
+            <label>Prompt de generación <span class="tag tag-blue">recomendado</span></label>
+            <input type="text" name="prompt" id="inferPrompt" placeholder="A bottle with <defect>" spellcheck="false">
+            <p class="hint">El token <code>&lt;defect&gt;</code> es obligatorio: es el embedding aprendido en el entrenamiento (si lo quitas se añade solo). Usa <strong>inglés</strong>: el codificador de texto CLIP entiende mucho mejor el inglés que el español, mezclar idiomas degrada el resultado.</p>
+          </div>
+          <div class="field">
+            <label class="checkbox"><input type="checkbox" name="dilate_mask"> Dilatar máscaras de referencia</label>
+          </div>
+
+          <button type="submit" class="btn btn-primary btn-block" id="btnStartInfer">Generar defectos sintéticos</button>
+          <p class="hint">Lanza <code>inference.py</code> en modo de generación dinámica (recorre imágenes buenas × máscaras hasta el total pedido) y selecciona el mejor candidato por LPIPS espacial.</p>
+        </form>
+
+        <div class="card monitor-card">
+          <div class="card-head-row">
+            <h3>Progreso en vivo</h3>
+            <span class="status-badge idle" id="inferStatusBadge">sin ejecución</span>
+          </div>
+
+          <div class="progress-block">
+            <div class="progress-numbers">
+              <span class="mono big" id="inferStepLabel">0 / 0</span>
+            </div>
+            <div class="progress-bar"><div class="progress-fill" id="inferProgressFill"></div></div>
+          </div>
+
+          <div class="log-console" id="inferLog"><p class="log-placeholder">El registro del proceso aparecerá aquí al iniciar la generación…</p></div>
+
+          <button class="btn btn-danger btn-small" id="btnStopInfer" disabled>Detener generación</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3>Vista previa — últimas generaciones</h3>
+        <div class="triplet-grid" id="inferPreviewGrid">
+          <p class="empty-state">Aún no hay generaciones en esta sesión.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ---------- RESULTS ---------- -->
+    <section class="panel" id="panel-results">
+      <div id="resultsRuns" class="results-runs">
+        <p class="empty-state">Sin resultados todavía.</p>
+      </div>
+    </section>
+
+    <!-- ---------- SYSTEM ---------- -->
+    <section class="panel" id="panel-system">
+      <div class="grid-2">
+        <div class="card">
+          <h3>Entorno</h3>
+          <dl class="spec-list" id="systemSpecs">
+            <div><dt>Python</dt><dd class="mono">—</dd></div>
+            <div><dt>PyTorch</dt><dd class="mono">—</dd></div>
+            <div><dt>CUDA disponible</dt><dd class="mono">—</dd></div>
+            <div><dt>GPU</dt><dd class="mono">—</dd></div>
+          </dl>
+        </div>
+        <div class="card">
+          <h3>Trabajos recientes</h3>
+          <div id="jobsList" class="jobs-list"><p class="empty-state">Ningún trabajo lanzado todavía.</p></div>
+        </div>
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<script src="static/app.js?v=12"></script>
+</body>
+</html>

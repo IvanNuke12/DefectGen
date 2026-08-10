@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sistema de Inspección · Pipeline HMI</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div class="shell">
+
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark">&#9673;</span>
+      <div class="brand-text">
+        <h1>Sistema de Inspección</h1>
+        <span class="brand-sub">Preprocesado &middot; Entrenamiento &middot; Postprocesado &middot; Verificación</span>
+      </div>
+    </div>
+    <nav class="tabs" role="tablist">
+      <button class="tab active" data-tab="crop" role="tab" aria-selected="true">Preprocesado</button>
+      <button class="tab" data-tab="train" role="tab" aria-selected="false">Entrenamiento</button>
+      <button class="tab" data-tab="merge" role="tab" aria-selected="false">Postprocesado</button>
+    </nav>
+    <div class="top-actions project-actions">
+      <span class="portal-project" id="portalProject" title="Proyecto activo">—</span>
+      <button class="portal-project-btn" id="portalProjectsBtn" type="button" title="Crear o cargar un proyecto">Proyectos</button>
+    </div>
+  </header>
+
+  <main class="stage">
+    <iframe id="frame-crop" class="frame" title="Preprocesado" src="" allow="fullscreen"></iframe>
+    <iframe id="frame-train" class="frame hidden" title="Entrenamiento" src="" allow="fullscreen"></iframe>
+    <iframe id="frame-merge" class="frame hidden" title="Postprocesado" src="" allow="fullscreen"></iframe>
+  </main>
+
+  <footer class="statusbar">
+    <span id="statusText">Cargando…</span>
+  </footer>
+
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>

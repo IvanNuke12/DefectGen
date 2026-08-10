@@ -1,0 +1,60 @@
+﻿# ==================================================================
+# defectgen — .gitignore
+# Lo que nunca debe versionarse: secretos, entornos, datos de cliente,
+# caches de modelos y artefactos de ejecución.
+# ==================================================================
+
+# --- Secretos y entorno ---
+.env
+*.env
+!.env.example
+env/
+.venv/
+venv/
+
+# --- Datos de proyectos (imágenes industriales, checkpoints, salidas) ---
+projects/
+crop-state/
+hf-cache/
+hf-cache-torch/
+
+# --- Estado local del HMI ---
+crop-hmi/config.json
+crop-hmi/projects_recent.json
+crop-hmi/crops_log.csv
+crop-hmi/state/
+*.json.recent
+
+# --- Checkpoints y artefactos de entrenamiento ---
+*.pt
+*.pth
+*.safetensors
+*.ckpt
+tensorboard/
+checkpoints/
+output/
+generated/
+
+# --- Logs y estado de procesos ---
+*.log
+status.json
+web_run.log
+train_log.txt
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.so
+.python-version
+.pytest_cache/
+.ruff_cache/
+
+# --- Entornos y herramientas ---
+.idea/
+.vscode/
+*.swp
+.DS_Store
+
+# --- Volúmenes docker locales no deseados ---
+docker-data/
+mysql-data/

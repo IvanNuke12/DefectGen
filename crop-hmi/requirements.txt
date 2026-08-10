@@ -1,0 +1,5 @@
+Flask>=3.0
+Pillow>=10.0
+# Necesarias para los tests y para máscaras COCO RLE en runtime
+numpy
+pycocotools

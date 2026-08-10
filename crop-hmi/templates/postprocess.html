@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Fusiona · Postprocesado</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ APP_SUBPATH }}{{ url_for('static', filename='css/style.css') }}?v=26">
+<script>window.APP_BASE = "{{ APP_SUBPATH }}";</script>
+</head>
+<body>
+
+<div class="app postproc" id="app">
+
+  <!-- ===================== HEADER ===================== -->
+  <header class="header">
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <polygon points="12 2 2 7 12 12 22 7 12 2"/>
+          <polyline points="2 17 12 22 22 17"/>
+          <polyline points="2 12 12 17 22 12"/>
+        </svg>
+      </span>
+      <div class="brand-text">
+        <h1>Fusión</h1>
+      </div>
+    </div>
+
+    <nav class="tabs" id="postprocTabs" role="tablist">
+      <button type="button" class="tab active" data-view="single" role="tab" aria-selected="true">Individual</button>
+      <button type="button" class="tab" data-view="batch" role="tab" aria-selected="false">Por lote</button>
+    </nav>
+  </header>
+
+  <!-- ===================== VIEWER (ancho completo) ===================== -->
+  <main class="viewer" id="viewer">
+
+    <!-- Vista individual: run de inferencia -> imagen generada -> auto-fusión -->
+    <div class="view-pane" id="viewSingle">
+    <div class="merge-grid">
+      <div class="merge-col">
+        <h3>1 · Imagen generada</h3>
+        <label class="field-label" for="mergeRunSelect">Run de inferencia</label>
+        <select id="mergeRunSelect" class="small-select"><option value="">— cargar runs —</option></select>
+
+        <label class="field-label" for="mergeGenFileSelect">Imagen generada (*_generated.png)</label>
+        <select id="mergeGenFileSelect" class="small-select" disabled><option value="">— selecciona run —</option></select>
+
+        <div class="merge-preview-wrap" id="mergePreviewWrap" style="display:none;">
+          <img id="mergePreviewImg" alt="Imagen generada seleccionada">
+          <div class="merge-preview-note mono" id="mergePreviewNote"></div>
+        </div>
+
+        <div class="merge-meta" id="mergeMeta" style="display:none;">
+          <div class="stat-row"><span>Crop de origen</span><span class="mono" id="mergeSourceCrop">—</span></div>
+          <div class="stat-row"><span>Imagen original</span><span class="mono" id="mergeFilename">—</span></div>
+          <div class="stat-row"><span>Coordenadas</span><span class="mono" id="mergeCoords">—</span></div>
+          <div class="stat-row"><span>Tamaño crop</span><span class="mono" id="mergeSize">—</span></div>
+        </div>
+      </div>
+
+      <div class="merge-col">
+        <h3>2 · Resultado</h3>
+        <div class="merge-result-empty" id="mergeResultEmpty">Selecciona una imagen generada para fusionarla automáticamente.</div>
+        <div class="merge-result-wrap" id="mergeResultWrap" style="display:none;">
+          <img id="mergeResultImg" alt="Imagen resultante">
+        </div>
+        <div class="merge-result-actions" id="mergeResultActions" style="display:none;">
+          <a class="btn btn-secondary" id="mergeDownloadBtn" download>Descargar</a>
+          <span class="merge-result-path mono" id="mergeResultPath"></span>
+        </div>
+      </div>
+    </div>
+    </div>
+
+    <!-- Vista por lote: fusiona todas las generadas de un run con progress bar -->
+    <div class="view-pane" id="viewBatch" style="display:none;">
+      <div class="merge-grid">
+        <div class="merge-col">
+          <h3>1 · Run de inferencia</h3>
+          <label class="field-label" for="batchRunSelect">Run</label>
+          <select id="batchRunSelect" class="small-select"><option value="">— cargar runs —</option></select>
+          <div class="batch-info" id="batchInfo">Selecciona un run para ver cuántas imágenes se fusionarán.</div>
+          <div class="merge-file-row">
+            <button class="btn btn-primary" id="batchMergeBtn" type="button" disabled>Fusionar todas</button>
+          </div>
+          <div class="batch-progress" id="batchProgress" style="display:none;">
+            <div class="progress-track"><div class="progress-fill" id="batchProgressFill"></div></div>
+            <span class="progress-label mono" id="batchProgressText">0 / 0</span>
+          </div>
+        </div>
+
+        <div class="merge-col">
+          <h3>2 · Resultados del lote</h3>
+          <div class="merge-result-empty" id="batchResultEmpty">Aún no se ha fusionado nada.</div>
+          <div class="batch-results" id="batchResults" style="display:none;"></div>
+        </div>
+      </div>
+    </div>
+
+  </main>
+
+  <footer class="footer">
+    <span class="mono" id="statusMessage">Listo.</span>
+  </footer>
+
+</div>
+
+<script src="{{ APP_SUBPATH }}{{ url_for('static', filename='js/common.js') }}?v=21"></script>
+<script src="{{ APP_SUBPATH }}{{ url_for('static', filename='js/merge.js') }}?v=22"></script>
+<script src="{{ APP_SUBPATH }}{{ url_for('static', filename='js/batchmerge.js') }}?v=21"></script>
+<script src="{{ APP_SUBPATH }}{{ url_for('static', filename='js/postprocess.js') }}?v=23"></script>
+</body>
+</html>

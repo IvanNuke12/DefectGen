@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+.thumb_cache/
+tests/
+.git/
+config.json
+projects_recent.json
+crops_log.csv

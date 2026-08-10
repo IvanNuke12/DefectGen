@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Recorte · Etiqueta · Fusiona</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ APP_SUBPATH }}{{ url_for('static', filename='css/style.css') }}?v=24">
+<script>window.APP_BASE = "{{ APP_SUBPATH }}";</script>
+</head>
+<body>
+
+<div class="app" id="app">
+
+  <!-- ===================== HEADER ===================== -->
+  <header class="header">
+    <div class="brand">
+      <span class="brand-mark">✂</span>
+      <div class="brand-text">
+        <h1>Recorte</h1>
+      </div>
+    </div>
+
+    <nav class="tabs" id="tabs">
+      <button class="tab active" data-tab="crop" type="button">Recortar</button>
+      <button class="tab" data-tab="labels" type="button">Etiquetado</button>
+    </nav>
+
+    <div class="header-right">
+      <div class="header-progress">
+        <div class="progress-track">
+          <div class="progress-fill" id="progressFill"></div>
+        </div>
+        <span class="progress-label mono" id="progressLabel">0 / 0</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- ===================== GALLERY (left, solo Recortar + Etiquetado) ===================== -->
+  <aside class="gallery" id="gallery">
+    <div class="gallery-search">
+      <input type="text" id="searchInput" placeholder="Buscar archivo…" autocomplete="off">
+    </div>
+    <div class="gallery-list" id="galleryList">
+      <div class="gallery-empty" id="galleryEmpty">Cargando imágenes…</div>
+    </div>
+  </aside>
+
+  <!-- ===================== VIEWER (center) ===================== -->
+  <main class="viewer" id="viewer">
+
+    <!-- ====== TAB: Recortar ====== -->
+    <section class="tab-pane active" data-tab="crop">
+      <div class="viewer-topbar">
+        <span class="filename" id="currentFilename">—</span>
+        <span class="hint">clic para recortar · ← → navegar · espacio saltar</span>
+      </div>
+
+      <div class="viewer-stage" id="viewerStage">
+        <div class="stage-empty" id="stageEmpty">
+          <p>Sin imágenes cargadas todavía.</p>
+          <p class="stage-empty-sub">Asegúrate de que el proyecto tenga imágenes en su carpeta <span class="mono">images/</span>.</p>
+        </div>
+        <div class="image-wrap" id="imageWrap" style="display:none;">
+          <img id="mainImage" draggable="false" alt="">
+          <div class="prev-crop" id="prevCrop" style="display:none;"></div>
+          <div class="reticle" id="reticle" style="display:none;">
+            <span class="corner tl"></span>
+            <span class="corner tr"></span>
+            <span class="corner bl"></span>
+            <span class="corner br"></span>
+            <span class="crosshair-h"></span>
+            <span class="crosshair-v"></span>
+          </div>
+          <div class="hud mono" id="hud" style="display:none;"></div>
+          <div class="saved-flash" id="savedFlash">¡Guardado!</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ====== TAB: Etiquetado ====== -->
+    <section class="tab-pane" data-tab="labels">
+      <div class="viewer-topbar">
+        <span class="filename" id="labelsFilename">—</span>
+        <span class="hint">previsualiza las máscaras sobre cada imagen</span>
+      </div>
+      <div class="viewer-stage">
+        <div class="stage-empty" id="labelsStageEmpty">
+          <p>Sin imagen seleccionada.</p>
+          <p class="stage-empty-sub">Pulsa una miniatura de la galería.</p>
+        </div>
+        <div class="image-wrap" id="labelsImageWrap" style="display:none;">
+          <img id="labelsImage" draggable="false" alt="">
+          <div class="prev-crop" id="labelsPrevCrop" style="display:none;"></div>
+          <img id="labelsMaskOverlay" class="mask-overlay" draggable="false" alt="Mascara superpuesta">
+          <canvas id="labelsEditCanvas" class="mask-editor" draggable="false"></canvas>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- ===================== PARAMS (right) — panel por tab ===================== -->
+  <aside class="params" id="params">
+
+    <!-- ---- Panel Recortar ---- -->
+    <div class="params-pane active" data-tab="crop">
+      <section class="panel-section">
+        <h2>Proyecto</h2>
+        <div class="stat-row"><span>Nombre</span><span class="mono" id="projectNameRow">—</span></div>
+        <div class="stat-row"><span>Imágenes</span><span class="mono project-path" id="projectInputRow">—</span></div>
+        <button class="btn btn-danger" id="deleteImageBtn" title="Borra la imagen seleccionada y sus recortes">Borrar imagen actual</button>
+        <div class="folder-warning" id="folderWarning" style="display:none;"></div>
+      </section>
+
+      <section class="panel-section">
+        <h2>Subir imágenes</h2>
+
+        <div class="split-drop title">
+          <span class="sd-label sd-good">Buenas →</span>
+          <span class="sd-path mono">test/good</span>
+        </div>
+        <label class="dropzone" for="importGoodInput">
+          <span class="dz-label" id="importGoodDropzoneLabel">Arrastra imágenes buenas o haz clic</span>
+          <input type="file" id="importGoodInput" name="files" multiple accept="image/png,image/jpeg,image/bmp,image/webp">
+        </label>
+
+        <div class="field">
+          <label for="defectTypeInput">Nombre del defecto</label>
+          <input type="text" id="defectTypeInput" placeholder="p.ej. hole, clase, abolladura…">
+        </div>
+
+        <div class="split-drop title">
+          <span class="sd-label sd-defect">Malas →</span>
+          <span class="sd-path mono" id="defectTypePath">train/defective/&lt;tipo&gt;</span>
+        </div>
+        <label class="dropzone" for="importDefectInput">
+          <span class="dz-label" id="importDefectDropzoneLabel">Arrastra imágenes defectuosas o haz clic</span>
+          <input type="file" id="importDefectInput" name="files" multiple accept="image/png,image/jpeg,image/bmp,image/webp">
+        </label>
+      </section>
+
+      <section class="panel-section">
+        <h2>Tamaño de recorte</h2>
+        <div class="slider-row">
+          <input type="range" id="cropSlider" min="20" max="500" value="250">
+          <input type="number" id="cropSizeInput" class="slider-input mono" min="1" max="500" value="250">
+        </div>
+        <div class="slider-hint">px · cuadrado centrado en el clic</div>
+      </section>
+
+      <section class="panel-section">
+        <h2>Recortes</h2>
+        <div class="stat-row"><span>Recortes</span><span class="mono" id="totalCrops">0</span></div>
+        <button class="btn btn-secondary" id="exportCsvBtn">Exportar CSV</button>
+      </section>
+    </div>
+
+    <!-- ---- Panel Etiquetado ---- -->
+    <div class="params-pane" data-tab="labels">
+      <section class="panel-section">
+        <h2>Anotaciones</h2>
+        <div class="section-title-row">
+          <label class="switch-label">
+            <input type="checkbox" id="annotationsEnabled">
+            <span>Activar</span>
+          </label>
+        </div>
+        <div id="annotationControls" class="annotation-controls">
+          <label class="field-label" for="annotationFormat">Formato</label>
+          <select id="annotationFormat" class="small-select">
+            <option value="auto">Detectar automáticamente</option>
+            <option value="coco">COCO JSON</option>
+            <option value="yolo">YOLO detection</option>
+          </select>
+          <label class="field-label" for="annotationPath">Anotaciones</label>
+          <div class="path-picker">
+            <input type="text" id="annotationPath" class="mono small" spellcheck="false" readonly placeholder="Carpeta YOLO o JSON COCO">
+            <button class="icon-btn" id="browseAnnotationsFolderBtn" type="button" title="Seleccionar carpeta de anotaciones" aria-label="Seleccionar carpeta de anotaciones">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6.5h6l2 2h10v9.5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6.5Zm0 3h18M3 6.5v-.5a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v1.5"/></svg>
+            </button>
+          </div>
+          <label class="dropzone" id="labelsDropzone" for="labelsFileInput">
+            <span class="dz-label" id="labelsDropzoneLabel">Arrastra labels y/o JSON COCO o haz clic para elegir</span>
+            <input type="file" id="labelsFileInput" name="files" multiple accept=".json,.txt,application/json,text/plain">
+          </label>
+          <button class="btn btn-primary" id="applyLabelsBtn">Aplicar y recargar</button>
+          <div class="annotation-status" id="annotationStatus">Activa el etiquetado y selecciona las anotaciones.</div>
+        </div>
+      </section>
+
+      <section class="panel-section">
+        <h2>Visualización</h2>
+        <label class="check-row">
+          <input type="checkbox" id="overlayEnabled" checked>
+          <span>Mostrar máscara</span>
+        </label>
+        <label class="field-label" for="opacitySlider">Opacidad</label>
+        <div class="slider-row">
+          <input type="range" id="opacitySlider" min="0" max="100" value="35">
+          <span class="mono slider-value" id="opacityValue">35%</span>
+        </div>
+      </section>
+
+      <section class="panel-section">
+        <h2>Editar máscara</h2>
+        <div class="toolbar-row" id="maskToolbar">
+          <button type="button" class="tool-btn is-active" data-tool="brush" title="Pincel">Pincel</button>
+          <button type="button" class="tool-btn" data-tool="eraser" title="Goma">Goma</button>
+          <button type="button" class="tool-btn" data-tool="rect" title="Rectángulo (2 clics)">Rectángulo</button>
+        </div>
+        <label class="field-label" for="brushSizeSlider">Tamaño</label>
+        <div class="slider-row">
+          <input type="range" id="brushSizeSlider" min="2" max="200" value="20">
+          <span class="mono slider-value" id="brushSizeValue">20px</span>
+        </div>
+        <div class="edit-actions">
+          <button type="button" class="btn btn-secondary" id="resetMaskBtn">Descartar</button>
+          <button type="button" class="btn btn-primary" id="saveMaskBtn">Guardar máscara</button>
+        </div>
+        <div class="annotation-status" id="maskEditorStatus">Dibuja sobre la imagen para corregir la máscara.</div>
+      </section>
+    </div>
+
+  </aside>
+
+  <footer class="footer">
+    <span class="mono" id="statusMessage">Listo.</span>
+  </footer>
+
+  <div class="drag-overlay" id="dragOverlay" style="display:none;">Suelta las imágenes para importarlas</div>
+
+</div>
+
+<script src="{{ APP_SUBPATH }}{{ url_for('static', filename='js/common.js') }}?v=21"></script>
+<script src="{{ APP_SUBPATH }}{{ url_for('static', filename='js/crop_app.js') }}?v=23"></script>
+  <script src="{{ APP_SUBPATH }}{{ url_for('static', filename='js/labels.js') }}?v=22"></script>
+<script src="{{ APP_SUBPATH }}{{ url_for('static', filename='js/app.js') }}?v=25"></script>
+</body>
+</html>
