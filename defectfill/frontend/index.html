@@ -7,7 +7,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="static/style.css?v=7">
+<link rel="stylesheet" href="static/style.css?v=10">
 <script>window.APP_BASE = "/train";</script>
 </head>
 <body>
@@ -34,6 +34,7 @@
       <button class="tab active" data-tab="train" type="button">Entrenamiento</button>
       <button class="tab" data-tab="eval" type="button">Evaluación</button>
       <button class="tab" data-tab="infer" type="button">Inferencia</button>
+      <button class="tab" data-tab="manual" type="button">Inferencia manual</button>
       <button class="tab" data-tab="results" type="button">Resultados</button>
       <button class="tab" data-tab="system" type="button">Sistema</button>
     </nav>
@@ -204,65 +205,162 @@
       <div class="grid-split">
         <form id="formInfer" class="card">
           <h3>Configuración</h3>
-          <div class="field">
-            <label>Checkpoint entrenado</label>
-            <select name="checkpoint" id="inferCheckpoint" required></select>
-          </div>
-          <div class="field-row">
-            <div class="field"><label>Proyecto activo</label><div class="active-project-readonly" id="inferActiveProject">—</div></div>
-            <div class="field"><label>Tipo de defecto</label><select name="defect_type" id="inferDefectType" required></select></div>
-          </div>
-          <div class="field-row">
-            <div class="field"><label>Imágenes a generar</label><input type="number" name="total_images" value="6" min="1"></div>
-            <div class="field"><label>Candidatos por imagen</label><input type="number" name="num_samples" value="8" min="1"></div>
-          </div>
-          <div class="field-row">
-            <div class="field"><label>Pasos de difusión</label><input type="number" name="steps" value="50" min="1"></div>
-            <div class="field"><label>Guidance scale</label><input type="number" name="guidance_scale" value="2.0" step="0.1"></div>
-          </div>
-          <div class="field">
-            <label>Batch size (generación en paralelo)</label>
-            <input type="number" name="batch_size" value="4" min="1">
-            <p class="hint">Candidatos que se generan a la vez por GPU. Sube si tienes VRAM de sobra (más rápido), baja a 1–2 si la GPU va escasa de memoria.</p>
-          </div>
-          <div class="field">
-            <label>Prompt de generación <span class="tag tag-blue">recomendado</span></label>
-            <input type="text" name="prompt" id="inferPrompt" placeholder="A bottle with <defect>" spellcheck="false">
-            <p class="hint">El token <code>&lt;defect&gt;</code> es obligatorio: es el embedding aprendido en el entrenamiento (si lo quitas se añade solo). Usa <strong>inglés</strong>: el codificador de texto CLIP entiende mucho mejor el inglés que el español, mezclar idiomas degrada el resultado.</p>
-          </div>
-          <div class="field">
-            <label class="checkbox"><input type="checkbox" name="dilate_mask"> Dilatar máscaras de referencia</label>
-          </div>
+              <div class="field">
+                <label>Checkpoint entrenado</label>
+                <select name="checkpoint" id="inferCheckpoint" required></select>
+              </div>
+              <div class="field-row">
+                <div class="field"><label>Proyecto activo</label><div class="active-project-readonly" id="inferActiveProject">—</div></div>
+                <div class="field"><label>Tipo de defecto</label><select name="defect_type" id="inferDefectType" required></select></div>
+              </div>
+              <div class="field-row">
+                <div class="field"><label>Imágenes a generar</label><input type="number" name="total_images" value="6" min="1"></div>
+                <div class="field"><label>Candidatos por imagen</label><input type="number" name="num_samples" value="8" min="1"></div>
+              </div>
+              <div class="field-row">
+                <div class="field"><label>Pasos de difusión</label><input type="number" name="steps" value="50" min="1"></div>
+                <div class="field"><label>Guidance scale</label><input type="number" name="guidance_scale" value="2.0" step="0.1"></div>
+              </div>
+              <div class="field">
+                <label>Batch size (generación en paralelo)</label>
+                <input type="number" name="batch_size" value="4" min="1">
+                <p class="hint">Candidatos que se generan a la vez por GPU. Sube si tienes VRAM de sobra (más rápido), baja a 1–2 si la GPU va escasa de memoria.</p>
+              </div>
+              <div class="field">
+                <label>Prompt de generación <span class="tag tag-blue">recomendado</span></label>
+                <input type="text" name="prompt" id="inferPrompt" placeholder="A bottle with <defect>" spellcheck="false">
+                <p class="hint">El token <code>&lt;defect&gt;</code> es obligatorio: es el embedding aprendido en el entrenamiento (si lo quitas se añade solo). Usa <strong>inglés</strong>: el codificador de texto CLIP entiende mucho mejor el inglés que el español, mezclar idiomas degrada el resultado.</p>
+              </div>
+              <div class="field">
+                <label class="checkbox"><input type="checkbox" name="dilate_mask"> Dilatar máscaras de referencia</label>
+              </div>
 
-          <button type="submit" class="btn btn-primary btn-block" id="btnStartInfer">Generar defectos sintéticos</button>
-          <p class="hint">Lanza <code>inference.py</code> en modo de generación dinámica (recorre imágenes buenas × máscaras hasta el total pedido) y selecciona el mejor candidato por LPIPS espacial.</p>
-        </form>
+              <button type="submit" class="btn btn-primary btn-block" id="btnStartInfer">Generar defectos sintéticos</button>
+              <p class="hint">Lanza <code>inference.py</code> en modo de generación dinámica (recorre imágenes buenas × máscaras hasta el total pedido) y selecciona el mejor candidato por LPIPS espacial.</p>
+            </form>
 
-        <div class="card monitor-card">
-          <div class="card-head-row">
-            <h3>Progreso en vivo</h3>
-            <span class="status-badge idle" id="inferStatusBadge">sin ejecución</span>
-          </div>
+            <div class="card monitor-card">
+              <div class="card-head-row">
+                <h3>Progreso en vivo</h3>
+                <span class="status-badge idle" id="inferStatusBadge">sin ejecución</span>
+              </div>
 
-          <div class="progress-block">
-            <div class="progress-numbers">
-              <span class="mono big" id="inferStepLabel">0 / 0</span>
+              <div class="progress-block">
+                <div class="progress-numbers">
+                  <span class="mono big" id="inferStepLabel">0 / 0</span>
+                </div>
+                <div class="progress-bar"><div class="progress-fill" id="inferProgressFill"></div></div>
+              </div>
+
+              <div class="log-console" id="inferLog"><p class="log-placeholder">El registro del proceso aparecerá aquí al iniciar la generación…</p></div>
+
+              <button class="btn btn-danger btn-small" id="btnStopInfer" disabled>Detener generación</button>
             </div>
-            <div class="progress-bar"><div class="progress-fill" id="inferProgressFill"></div></div>
           </div>
 
-          <div class="log-console" id="inferLog"><p class="log-placeholder">El registro del proceso aparecerá aquí al iniciar la generación…</p></div>
+          <div class="card">
+            <h3>Vista previa — últimas generaciones</h3>
+            <div class="triplet-grid" id="inferPreviewGrid">
+              <p class="empty-state">Aún no hay generaciones en esta sesión.</p>
+            </div>
+          </div>
+    </section>
 
-          <button class="btn btn-danger btn-small" id="btnStopInfer" disabled>Detener generación</button>
-        </div>
-      </div>
+    <!-- ---------- INFERENCIA MANUAL ---------- -->
+    <section class="panel" id="panel-manual">
+      <div class="grid-split">
+        <form id="formManual" class="card">
+          <h3>Inferencia manual</h3>
+              <div class="field">
+                <label>Checkpoint entrenado</label>
+                <select name="checkpoint" id="manualCheckpoint" required></select>
+              </div>
+              <div class="field-row">
+                <div class="field"><label>Proyecto activo</label><div class="active-project-readonly" id="manualActiveProject">—</div></div>
+                <div class="field"><label>Tipo de defecto</label><select name="defect_type" id="manualDefectType" required></select></div>
+              </div>
+              <div class="field">
+                <label>Imagen de origen (crop de imagen good)</label>
+                <select name="image" id="manualSourceImage" required></select>
+                <p class="hint">Solo crops generados desde imágenes good en el HMI (tamaño homogéneo). Al elegir un crop se carga en el editor para pintar la máscara.</p>
+              </div>
+              <div class="field-row">
+                <div class="field"><label>Imágenes a generar</label><input type="number" name="total_images" value="4" min="1"></div>
+                <div class="field"><label>Candidatos por imagen</label><input type="number" name="num_samples" value="8" min="1"></div>
+              </div>
+              <div class="field-row">
+                <div class="field"><label>Pasos de difusión</label><input type="number" name="steps" value="50" min="1"></div>
+                <div class="field"><label>Guidance scale</label><input type="number" name="guidance_scale" value="2.0" step="0.1"></div>
+              </div>
+              <div class="field">
+                <label>Batch size (generación en paralelo)</label>
+                <input type="number" name="batch_size" value="4" min="1">
+                <p class="hint">Candidatos que se generan a la vez por GPU. Sube si tienes VRAM de sobra, baja a 1–2 si va escasa.</p>
+              </div>
+              <div class="field">
+                <label>Nombre del run (opcional)</label>
+                <input type="text" name="run_name" placeholder="p.ej. lata-dentada-manual">
+              </div>
+              <div class="field">
+                <label>Prompt de generación <span class="tag tag-blue">recomendado</span></label>
+                <input type="text" name="prompt" id="manualPrompt" placeholder="A bottle with <defect>" spellcheck="false">
+              </div>
+              <div class="field">
+                <label class="checkbox"><input type="checkbox" name="dilate_mask"> Dilatar la máscara pintada</label>
+              </div>
 
-      <div class="card">
-        <h3>Vista previa — últimas generaciones</h3>
-        <div class="triplet-grid" id="inferPreviewGrid">
-          <p class="empty-state">Aún no hay generaciones en esta sesión.</p>
-        </div>
-      </div>
+              <button type="submit" class="btn btn-primary btn-block" id="btnStartManual" disabled>Generar defecto sobre esta máscara</button>
+              <p class="hint">Pinta la máscara sobre la imagen (pincel / goma / rectángulo) e inicia la generación: el modelo rellena <strong>solo</strong> esa zona siguiendo lo aprendido en el checkpoint. El resultado aparece en Resultados y es fusionable.</p>
+            </form>
+
+            <div class="card monitor-card">
+              <div class="card-head-row">
+                <h3>Progreso manual</h3>
+                <span class="status-badge idle" id="manualStatusBadge">sin ejecución</span>
+              </div>
+              <div class="progress-block">
+                <div class="progress-numbers"><span class="mono big" id="manualStepLabel">0 / 0</span></div>
+                <div class="progress-bar"><div class="progress-fill" id="manualProgressFill"></div></div>
+              </div>
+              <div class="log-console" id="manualLog"><p class="log-placeholder">El registro del proceso aparecerá aquí al iniciar la inferencia manual…</p></div>
+              <button class="btn btn-danger btn-small" id="btnStopManual" disabled>Detener generación</button>
+            </div>
+          </div>
+
+          <div class="card">
+            <h3>Editor de máscara</h3>
+            <div class="mask-toolbar" id="manualMaskToolbar" style="flex-wrap:wrap">
+              <button type="button" class="tool-btn is-active" data-tool="brush" title="Pincel">Pincel</button>
+              <button type="button" class="tool-btn" data-tool="eraser" title="Goma">Goma</button>
+              <button type="button" class="tool-btn" data-tool="rect" title="Rectángulo">Rect</button>
+              <button type="button" class="tool-btn" data-tool="clear" title="Limpiar máscara">Limpiar</button>
+              <label class="brush-size">
+                <span>Pincel</span>
+                <input type="range" id="manualBrushSize" min="2" max="80" value="20">
+                <span class="mono" id="manualBrushSizeValue">20</span>
+              </label>
+              <button type="button" class="tool-btn" data-tool="import" id="manualImportBtn" title="Importar máscara desde un archivo PNG/JPEG">+ Importar</button>
+              <input type="file" id="manualImportFile" accept=".png,.jpeg,.jpg,.webp" style="display:none">
+            </div>
+            <div class="mask-stage">
+              <div class="mask-stage-empty" id="manualStageEmpty">
+                <p>Selecciona una imagen de origen para pintar la máscara.</p>
+              </div>
+              <div class="mask-image-wrap" id="manualImageWrap" style="display:none">
+                <img id="manualImage" alt="imagen de origen">
+                <canvas id="manualEditCanvas" class="mask-canvas"></canvas>
+              </div>
+              <div class="mask-stage-status" id="manualMaskStatus">—</div>
+            </div>
+            <p class="hint">El área blanca/roja marca dónde se generará el defecto. Deja la zona vacía si quieres que el modelo decida por toda la imagen.</p>
+          </div>
+
+          <div class="card">
+            <h3>Vista previa — inferencias manuales</h3>
+            <div class="triplet-grid" id="manualPreviewGrid">
+              <p class="empty-state">Aún no hay inferencias manuales en esta sesión.</p>
+            </div>
+          </div>
     </section>
 
     <!-- ---------- RESULTS ---------- -->
@@ -294,6 +392,6 @@
   </main>
 </div>
 
-<script src="static/app.js?v=12"></script>
+<script src="static/app.js?v=16"></script>
 </body>
 </html>

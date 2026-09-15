@@ -288,6 +288,171 @@ def api_infer_start(req: InferRequest):
     return job.to_summary()
 
 
+class ManualInferRequest(BaseModel):
+    checkpoint: str
+    object_class: str
+    class_name: Optional[str] = None
+    defect_type: Optional[str] = None
+    run_name: Optional[str] = None
+    image: str  # ruta relativa al proyecto (p.ej. crops/images/Foo_crop_1.jpg)
+    mask_b64: str  # PNG base64 de la máscara pintada a mano (resolución de la imagen)
+    total_images: int = 4
+    num_samples: int = 8
+    steps: int = 50
+    guidance_scale: float = 2.0
+    batch_size: int = 4
+    lora_rank: int = 8
+    lora_alpha: int = 16
+    dilate_mask: bool = False
+    mask_kernel_size: int = 3
+    prompt: Optional[str] = None
+
+
+@app.get("/api/infer/manual/sources")
+def api_infer_manual_sources(project: Optional[str] = None):
+    """Imágenes de origen válidas para la inferencia manual: solo crops
+    de imágenes good (dataset_kind==good en crops_log.csv). Evita que el
+    usuario seleccione crops anómalos que ya contienen defecto."""
+    if not project:
+        active = project_state.get_active_project()
+        if active:
+            project = active["name"]
+    sources = []
+    if not project:
+        return {"sources": sources}
+    pdir = DATA_DIR / project
+    if not pdir.is_dir():
+        return {"sources": sources}
+
+    # Leer crops_log.csv para filtrar solo good crops si existe
+    good_crops = None  # None = sin filtro (fallback a todos)
+    log_path = pdir / "crops" / "crops_log.csv"
+    if log_path.is_file():
+        try:
+            import csv
+            good_set = set()
+            with open(log_path, newline="", encoding="utf-8") as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    if (row.get("dataset_kind") or "").strip().lower() == "good":
+                        cn = (row.get("crop_name") or "").strip()
+                        if cn:
+                            good_set.add(cn)
+            if good_set:
+                good_crops = good_set
+        except Exception:
+            good_crops = None
+
+    def _scan(base, kind):
+        if not base.is_dir():
+            return
+        for f in sorted(base.rglob("*")):
+            if not f.is_file() or f.suffix.lower() not in (".png", ".jpg", ".jpeg", ".bmp", ".webp"):
+                continue
+            # Filtrar solo good crops si tenemos el log
+            if good_crops is not None and f.name not in good_crops:
+                continue
+            try:
+                from PIL import Image
+                with Image.open(f) as im:
+                    w, h = im.size
+            except Exception:
+                continue
+            sources.append({
+                "rel": f.relative_to(pdir).as_posix(),
+                "name": f.name,
+                "kind": kind,
+                "width": w,
+                "height": h,
+            })
+
+    _scan(pdir / "crops" / "images", "crop")
+    # Fallback: si el log filtró todo (p.ej. proyecto sin log o sin good), no dejar vacío si hay crops
+    if not sources and good_crops is not None:
+        # Intentar sin filtro para no bloquear la UI
+        for f in sorted((pdir / "crops" / "images").rglob("*")):
+            if not f.is_file() or f.suffix.lower() not in (".png", ".jpg", ".jpeg", ".bmp", ".webp"):
+                continue
+            try:
+                from PIL import Image
+                with Image.open(f) as im:
+                    w, h = im.size
+            except Exception:
+                continue
+            sources.append({
+                "rel": f.relative_to(pdir).as_posix(),
+                "name": f.name,
+                "kind": "crop",
+                "width": w,
+                "height": h,
+            })
+    sources.sort(key=lambda s: s["name"])
+    return {"sources": sources, "project": project}
+
+
+@app.post("/api/infer/manual/start")
+def api_infer_manual_start(req: ManualInferRequest):
+    import base64, io
+    active = project_state.get_active_project()
+    if active and req.object_class != active["name"]:
+        raise HTTPException(400,
+            f"El proyecto activo es '{active['name']}'. Solo se puede inferir "
+            f"sobre el proyecto activo.")
+    pdir = DATA_DIR / req.object_class
+    if not pdir.is_dir():
+        raise HTTPException(400, f"Proyecto '{req.object_class}' no existe.")
+
+    # --- Resolver la imagen de origen dentro del proyecto ---
+    pdir_res = pdir.resolve()
+    image_abs = (pdir / req.image).resolve()
+    if not image_abs.is_relative_to(pdir_res) or not image_abs.is_file():
+        raise HTTPException(400, "Imagen de origen no válida o no encontrada.")
+
+    # --- Run de salida (mismo esquema que la generación automática) ---
+    safe_run = "".join(c for c in (req.run_name or "") if c.isalnum() or c in ("-", "_")).strip() or f"{req.object_class}_manual"
+    run_dir = pdir / "generated" / f"{safe_run}_{time.strftime('%Y%m%d_%H%M%S')}"
+    run_dir.mkdir(parents=True, exist_ok=True)
+
+    # --- Guardar la máscara dibujada (PNG base64), alineada a la imagen ---
+    try:
+        from PIL import Image as PILImage
+    except ImportError:
+        raise HTTPException(500, "PIL no disponible")
+    try:
+        mask_img = PILImage.open(io.BytesIO(base64.b64decode(req.mask_b64))).convert("L")
+    except Exception as exc:
+        raise HTTPException(400, f"Máscara inválida: {exc}")
+    with PILImage.open(image_abs) as simg:
+        img_size = simg.size
+    if mask_img.size != img_size:
+        mask_img = mask_img.resize(img_size, PILImage.Resampling.NEAREST)
+    mask_path = run_dir / "input_mask.png"
+    mask_img.save(mask_path, "PNG")
+    # Log para depurar uso de máscara
+    try:
+        import numpy as _np
+        _arr = _np.array(mask_img)
+        print(f"[Manual] Máscara guardada {mask_path} size={mask_img.size} non_zero={int((_arr>0).sum())} unique={sorted(set(_arr.ravel().tolist())[:5])}")
+    except Exception:
+        pass
+
+    # --- Copia autocontenida de la imagen dentro del run (mismo nombre, para
+    # que la fusión del HMI pueda resolver el crop de origen por nombre) ---
+    image_in_run = run_dir / image_abs.name
+    if image_in_run.resolve() != image_abs.resolve():
+        import shutil
+        shutil.copy2(image_abs, image_in_run)
+
+    params = req.dict()
+    params["class_name"] = _resolve_class_name(req.object_class, req.class_name)
+    params["image_path"] = str(image_in_run)
+    params["mask_path"] = str(mask_path)
+    # Reusar el mismo run_dir como output_dir para no generar carpetas huérfanas
+    params["_output_dir"] = str(run_dir)
+    job = manager.start_manual_inference(params)
+    return job.to_summary()
+
+
 class ValidateRequest(BaseModel):
     object_class: str
     run: str
@@ -467,9 +632,10 @@ def api_generated_runs(project: Optional[str] = None):
         gen_root = class_dir / "generated"
         if not gen_root.exists():
             continue
-        for run_dir in sorted(gen_root.iterdir(), reverse=True):
-            if not run_dir.is_dir():
-                continue
+        # Runs ordenados por fecha de modificación descendente (más reciente primero).
+        run_dirs = [d for d in gen_root.iterdir() if d.is_dir()]
+        run_dirs = sorted(run_dirs, key=lambda d: d.stat().st_mtime, reverse=True)
+        for run_dir in run_dirs:
             status_path = run_dir / "status.json"
             status = None
             if status_path.exists():
@@ -478,7 +644,11 @@ def api_generated_runs(project: Optional[str] = None):
                 except Exception:
                     pass
             files = []
-            for f in sorted(run_dir.rglob("*.png")):
+            # Archivos ordenados por fecha de modificación descendente para que el
+            # más reciente (mayor índice de generación) aparezca primero.
+            pngs = [f for f in run_dir.rglob("*.png")]
+            pngs = sorted(pngs, key=lambda f: f.stat().st_mtime, reverse=True)
+            for f in pngs:
                 kind = ""
                 if f.name.endswith("_generated.png"):
                     kind = "generated"
@@ -586,4 +756,7 @@ app.mount("/static", StaticFiles(directory=str(FRONTEND_DIR)), name="static")
 
 @app.get("/")
 def index():
-    return FileResponse(str(FRONTEND_DIR / "index.html"))
+    return FileResponse(
+        str(FRONTEND_DIR / "index.html"),
+        headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+    )

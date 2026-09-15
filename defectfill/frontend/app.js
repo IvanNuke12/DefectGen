@@ -17,9 +17,10 @@ $$(".tab").forEach((tab) => {
     if (tab.dataset.tab === "results") loadResults();
     if (tab.dataset.tab === "system") { loadSystem(); loadJobs(); }
     if (tab.dataset.tab === "train") drawAllCharts();
-    if (tab.dataset.tab === "train" || tab.dataset.tab === "infer") {
+    if (tab.dataset.tab === "train" || tab.dataset.tab === "infer" || tab.dataset.tab === "manual") {
       refreshSelectors();
     }
+    if (tab.dataset.tab === "manual") loadManualSources();
   });
 });
 
@@ -250,12 +251,12 @@ function populateSelect(select, options, placeholder) {
 }
 
 function populateDefectTypes(kind) {
-  const defSel = kind === "train" ? $("#trainDefectType") : $("#inferDefectType");
+  const defSel = kind === "train" ? $("#trainDefectType") : kind === "infer" ? $("#inferDefectType") : $("#manualDefectType");
   if (!defSel) return;
-  const cls = (datasetSummary || []).find((c) => c.object_class === (activeProject && activeProject.name && kind === "infer" ? activeProject.name : activeProject && activeProject.name));
+  const cls = (datasetSummary || []).find((c) => c.object_class === (activeProject && activeProject.name));
   const types = (cls && cls.defect_types) || [];
   populateSelect(defSel, types.map((t) => ({ value: t.defect_type, text: `${t.defect_type} (${t.image_count} img / ${t.mask_count} masc)` })), "— todos —");
-  if (kind === "infer") defSel.disabled = !types.length;
+  if (kind === "infer" || kind === "manual") defSel.disabled = !types.length;
   else defSel.disabled = false;
 }
 
@@ -280,10 +281,14 @@ async function refreshSelectors() {
   if (ckptRes && ckptRes.ok) {
     try { checkpoints = await ckptRes.json(); } catch (_) { checkpoints = []; }
   }
-  populateSelect($("#inferCheckpoint"), (Array.isArray(checkpoints) ? checkpoints : []).map((c) => ({
+  const ckptOptions = (Array.isArray(checkpoints) ? checkpoints : []).map((c) => ({
     value: c.path,
     text: `${c.run} / ${c.filename} (${fmtBytes(c.size_mb * 1e6)})`,
-  })), "— sin checkpoints —");
+  }));
+  populateSelect($("#inferCheckpoint"), ckptOptions, "— sin checkpoints —");
+  populateSelect($("#manualCheckpoint"), ckptOptions, "— sin checkpoints —");
+  populateDefectTypes("manual");
+  loadManualSources();
 }
 
 async function loadDatasetSummary() {
@@ -352,6 +357,8 @@ function renderActiveProject() {
   if (boxTrain) boxTrain.textContent = activeProject ? activeProject.class_name : "— sin proyecto —";
   const boxInfer = $("#inferActiveProject");
   if (boxInfer) boxInfer.textContent = activeProject ? activeProject.class_name : "— sin proyecto —";
+  const boxManual = $("#manualActiveProject");
+  if (boxManual) boxManual.textContent = activeProject ? activeProject.class_name : "— sin proyecto —";
 }
 
 function populateProjectSelect() {
@@ -483,12 +490,13 @@ async function uploadDefect() {
 }
 
 // ---------------------------------------------------------------- Job monitoring (SSE)
-const monitors = { train: null, infer: null, eval: null };
-const RUNNING = { train: false, infer: false, eval: false };
+const monitors = { train: null, infer: null, eval: null, manual: null };
+const RUNNING = { train: false, infer: false, eval: false, manual: false };
 
-// Prefijo DOM para cada tipo de job: train→train, infer→infer, eval→val.
+// Prefijo DOM para cada tipo de job: train→train, infer→infer, eval→val, manual→manual.
+const DOM_PREFIX = { train: "train", infer: "infer", eval: "val", manual: "manual" };
 function domId(kind, base) {
-  const prefix = kind === "train" ? "train" : kind === "infer" ? "infer" : "val";
+  const prefix = DOM_PREFIX[kind] || "val";
   return document.getElementById(prefix + base);
 }
 
@@ -536,8 +544,7 @@ function runFromSummary(summary) {
   return { cls, run };
 }
 
-function renderInferPreviews(meta, images) {
-  const grid = $("#inferPreviewGrid");
+function renderTripletGrid(grid, meta, images) {
   if (!grid) return;
   grid.innerHTML = "";
   const cls = meta && meta.cls ? meta.cls : "";
@@ -565,6 +572,14 @@ function renderInferPreviews(meta, images) {
   }
 }
 
+function renderInferPreviews(meta, images) {
+  renderTripletGrid($("#inferPreviewGrid"), meta, images);
+}
+
+function renderManualPreviews(meta, images) {
+  renderTripletGrid($("#manualPreviewGrid"), meta, images);
+}
+
 function handleStream(kind, d) {
   if (d.new_log_lines && d.new_log_lines.length) appendLog(kind, d.new_log_lines);
   const status = d.status;
@@ -580,6 +595,9 @@ function handleStream(kind, d) {
     } else if (kind === "infer") {
       if (status.images) renderInferPreviews(runFromSummary(d.summary), status.images);
       if (status.error) appendLog("infer", [`[error] ${status.error}`]);
+    } else if (kind === "manual") {
+      if (status.images) renderManualPreviews(runFromSummary(d.summary), status.images);
+      if (status.error) appendLog("manual", [`[error] ${status.error}`]);
     } else if (kind === "eval") {
       if (d.closed) loadValidationResult();
       if (status.error) appendLog("eval", [`[error] ${status.error}`]);
@@ -612,6 +630,10 @@ function setRunningUi(kind, running) {
   } else if (kind === "infer") {
     const start = $("#btnStartInfer"), stop = $("#btnStopInfer");
     if (start) start.disabled = running;
+    if (stop) stop.disabled = !running;
+  } else if (kind === "manual") {
+    const start = $("#btnStartManual"), stop = $("#btnStopManual");
+    if (start) start.disabled = running || !manualMask.hasSource();
     if (stop) stop.disabled = !running;
   } else if (kind === "eval") {
     const start = $("#btnStartValidate"), stop = $("#btnStopValidate");
@@ -756,6 +778,422 @@ async function stopInfer() {
   es.close();
   monitors.infer = null;
   setRunningUi("infer", false);
+}
+
+// ---------------------------------------------------------------- Inferencia manual
+let manualSources = [];
+
+async function loadManualSources() {
+  const sel = $("#manualSourceImage");
+  if (!sel) return;
+  const proj = activeProject ? `?project=${encodeURIComponent(activeProject.name)}` : "";
+  const prev = sel.value;
+  try {
+    const res = await fetch(api(`/api/infer/manual/sources${proj}`));
+    const data = await res.json();
+    manualSources = (data && data.sources) || [];
+  } catch (_) { manualSources = []; }
+  sel.innerHTML = "";
+  const ph = document.createElement("option");
+  ph.value = "";
+  ph.textContent = manualSources.length ? "— elige imagen —" : "— sin imágenes disponibles —";
+  sel.appendChild(ph);
+  // Solo crops de good: agrupados por tamaño es innecesario (homogéneo)
+  for (const s of manualSources) {
+    const opt = document.createElement("option");
+    opt.value = s.rel;
+    opt.textContent = `${s.name}  (${s.width}×${s.height})`;
+    sel.appendChild(opt);
+  }
+  if (prev && manualSources.some((s) => s.rel === prev)) sel.value = prev;
+  onManualSourceChange();
+}
+
+// Estado del editor de máscara (pincel/goma/rect, a resolución natural).
+const manualMask = {
+  natural: null,       // {w, h} resolución natural de la imagen actual
+  maskCanvas: null,    // canvas a resolución natural (blanco opaco = defecto)
+  current: null,       // {rel, name, kind, width, height}
+  tool: "brush",
+  brushSize: 20,
+  drawing: false,
+  lastPos: null,
+  rectStart: null,
+  rectCurrent: null,
+  cursor: null,
+  token: 0,
+
+  hasSource() { return !!this.current; },
+
+  hasPixels() {
+    if (!this.maskCanvas) return false;
+    const ctx = this.maskCanvas.getContext("2d");
+    const d = ctx.getImageData(0, 0, this.maskCanvas.width, this.maskCanvas.height);
+    for (let i = 3; i < d.data.length; i += 4) if (d.data[i] > 0) return true;
+    return false;
+  },
+
+  asDataUrlB64() {
+    return this.maskCanvas ? (this.maskCanvas.toDataURL("image/png").split(",")[1] || "") : "";
+  },
+};
+
+function manualStageStatus(text, isError) {
+  const st = $("#manualMaskStatus");
+  if (!st) return;
+  st.textContent = text;
+  st.classList.toggle("error", Boolean(isError));
+  st.classList.toggle("ok", !isError && text !== "—");
+}
+
+function manualSetImage(src) {
+  const im = manualSources.find((s) => s.rel === src) || null;
+  const empty = $("#manualStageEmpty"), wrap = $("#manualImageWrap");
+  const img = $("#manualImage"), canvas = $("#manualEditCanvas");
+  const btn = $("#btnStartManual");
+  const tok = ++manualMask.token;
+  manualMask.current = im;
+  manualMask.natural = im ? { w: im.width, h: im.height } : null;
+  manualMask.maskCanvas = null;
+  manualMask.rectStart = null;
+  manualMask.rectCurrent = null;
+  manualMask.drawing = false;
+  manualMask.lastPos = null;
+  manualMask.cursor = null;
+  if (btn) btn.disabled = !im || RUNNING.manual;
+  if (!im) {
+    empty.style.display = "flex";
+    empty.querySelector("p").textContent = "Selecciona una imagen de origen para pintar la máscara.";
+    wrap.style.display = "none";
+    img.removeAttribute("src");
+    canvas.style.display = "none";
+    manualStageStatus("—");
+    return;
+  }
+  empty.style.display = "none";
+  wrap.style.display = "block";
+  img.style.visibility = "hidden";
+  img.onload = () => {
+    if (manualMask.token !== tok) return;
+    img.style.visibility = "visible";
+    canvas.style.display = "block";
+    manualSyncCanvasBuffer();
+    const c = document.createElement("canvas");
+    c.width = Math.max(1, im.width);
+    c.height = Math.max(1, im.height);
+    manualMask.maskCanvas = c;
+    manualRender();
+    manualStageStatus(`Máscara lista para ${im.name} (${im.width}×${im.height}).`);
+  };
+  img.onerror = () => {
+    if (manualMask.token !== tok) return;
+    empty.style.display = "flex";
+    empty.querySelector("p").textContent = "No se pudo cargar la imagen.";
+    wrap.style.display = "none";
+    manualStageStatus("No se pudo cargar la imagen de origen.", true);
+  };
+  img.src = api(`/files/data/${activeProject.name}/${src}`) + "?t=" + Date.now();
+}
+
+function manualSyncCanvasBuffer() {
+  const canvas = $("#manualEditCanvas");
+  const rect = canvas.getBoundingClientRect();
+  if (rect.width > 0 && rect.height > 0) {
+    const dpr = window.devicePixelRatio || 1;
+    const w = Math.max(1, Math.round(rect.width * dpr));
+    const h = Math.max(1, Math.round(rect.height * dpr));
+    if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
+  }
+  manualRender();
+}
+
+function manualRender() {
+  const v = $("#manualEditCanvas");
+  if (!v) return;
+  const vctx = v.getContext("2d");
+  vctx.clearRect(0, 0, v.width, v.height);
+  if (!manualMask.maskCanvas || !manualMask.natural) return;
+
+  // Máscara en rojo translúcido (destino-in recorta al área pintada)
+  vctx.globalCompositeOperation = "source-over";
+  vctx.fillStyle = "rgba(239, 83, 80, 0.35)";
+  vctx.fillRect(0, 0, v.width, v.height);
+  vctx.globalCompositeOperation = "destination-in";
+  vctx.drawImage(manualMask.maskCanvas, 0, 0, manualMask.natural.w, manualMask.natural.h, 0, 0, v.width, v.height);
+  vctx.globalCompositeOperation = "source-over";
+
+  // Rectángulo en curso
+  if (manualMask.rectStart && manualMask.rectCurrent) {
+    const sx = manualMask.rectStart, ex = manualMask.rectCurrent;
+    vctx.save();
+    vctx.strokeStyle = "rgba(255, 255, 255, 0.95)";
+    vctx.lineWidth = 1.5;
+    vctx.setLineDash([5, 4]);
+    vctx.strokeRect(Math.min(sx.x, ex.x), Math.min(sx.y, ex.y), Math.abs(ex.x - sx.x), Math.abs(ex.y - sx.y));
+    vctx.restore();
+  }
+
+  // Anillo del pincel — igual que en el HMI (preprocesado), con corrección DPR
+  // para que el anillo coincida exactamente con lo que se pinta.
+  if (manualMask.cursor && manualMask.tool !== "rect") {
+    const r = v.getBoundingClientRect();
+    const dpr = r.width > 0 ? v.width / r.width : (window.devicePixelRatio || 1);
+    vctx.save();
+    vctx.strokeStyle = "rgba(255,255,255,0.85)";
+    vctx.fillStyle = "rgba(255,255,255,0.12)";
+    vctx.lineWidth = 1.25;
+    vctx.beginPath();
+    vctx.arc(manualMask.cursor.x, manualMask.cursor.y, manualMask.brushSize * dpr, 0, Math.PI * 2);
+    vctx.fill();
+    vctx.stroke();
+    vctx.restore();
+  }
+}
+
+function manualDisplayToNatural(clientX, clientY) {
+  const r = $("#manualEditCanvas").getBoundingClientRect();
+  return {
+    x: ((clientX - r.left) * manualMask.natural.w) / r.width,
+    y: ((clientY - r.top) * manualMask.natural.h) / r.height,
+  };
+}
+
+function manualNaturalBrushRadius() {
+  const r = $("#manualEditCanvas").getBoundingClientRect();
+  return manualMask.brushSize * (manualMask.natural.w / r.width);
+}
+
+function manualPaintStroke(from, to) {
+  const ctx = manualMask.maskCanvas.getContext("2d");
+  ctx.save();
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  ctx.lineWidth = Math.max(1, manualNaturalBrushRadius() * 2);
+  ctx.beginPath();
+  ctx.moveTo(from.x, from.y);
+  ctx.lineTo(to.x, to.y);
+  if (manualMask.tool === "eraser") {
+    ctx.globalCompositeOperation = "destination-out";
+    ctx.strokeStyle = "rgba(0,0,0,1)";
+  } else {
+    ctx.globalCompositeOperation = "source-over";
+    ctx.strokeStyle = "#fff";
+  }
+  ctx.stroke();
+  ctx.restore();
+}
+
+function manualPaintDot(x, y) {
+  const ctx = manualMask.maskCanvas.getContext("2d");
+  ctx.save();
+  ctx.globalCompositeOperation = manualMask.tool === "eraser" ? "destination-out" : "source-over";
+  ctx.fillStyle = manualMask.tool === "eraser" ? "rgba(0,0,0,1)" : "#fff";
+  ctx.beginPath();
+  ctx.arc(x, y, Math.max(1, manualNaturalBrushRadius()), 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
+function manualFinishRect(startNat, endNat) {
+  const ctx = manualMask.maskCanvas.getContext("2d");
+  ctx.save();
+  ctx.globalCompositeOperation = "source-over";
+  ctx.fillStyle = "#fff";
+  ctx.fillRect(
+    Math.min(startNat.x, endNat.x), Math.min(startNat.y, endNat.y),
+    Math.abs(endNat.x - startNat.x), Math.abs(endNat.y - startNat.y)
+  );
+  ctx.restore();
+}
+
+function manualDispPoint(clientX, clientY) {
+  const r = $("#manualEditCanvas").getBoundingClientRect();
+  return {
+    x: (clientX - r.left) * ($("#manualEditCanvas").width / r.width),
+    y: (clientY - r.top) * ($("#manualEditCanvas").height / r.height),
+  };
+}
+
+function manualOnPointerDown(e) {
+  if (!manualMask.maskCanvas || !manualMask.natural) return;
+  e.preventDefault();
+  const canvas = $("#manualEditCanvas");
+  canvas.setPointerCapture(e.pointerId);
+  const disp = manualDispPoint(e.clientX, e.clientY);
+  const nat = manualDisplayToNatural(e.clientX, e.clientY);
+  if (manualMask.tool === "rect") {
+    manualMask.rectStart = disp;
+    manualMask.rectCurrent = disp;
+  } else {
+    manualMask.drawing = true;
+    manualMask.lastPos = nat;
+    manualPaintDot(nat.x, nat.y);
+  }
+  manualMask.cursor = disp;
+  manualRender();
+}
+
+function manualOnPointerMove(e) {
+  if (!manualMask.natural || !manualMask.maskCanvas) return;
+  const disp = manualDispPoint(e.clientX, e.clientY);
+  manualMask.cursor = disp;
+  if (manualMask.rectStart) {
+    manualMask.rectCurrent = disp;
+    manualRender();
+    return;
+  }
+  if (!manualMask.drawing) { manualRender(); return; }
+  const nat = manualDisplayToNatural(e.clientX, e.clientY);
+  if (manualMask.lastPos) {
+    manualPaintStroke(manualMask.lastPos, nat);
+    manualMask.lastPos = nat;
+  } else {
+    manualPaintDot(nat.x, nat.y);
+    manualMask.lastPos = nat;
+  }
+  manualRender();
+}
+
+function manualOnPointerUp(e) {
+  if (manualMask.rectStart) {
+    const r = $("#manualEditCanvas").getBoundingClientRect();
+    const sx = manualMask.rectStart;
+    const startNat = {
+      x: (sx.x * manualMask.natural.w) / $("#manualEditCanvas").width,
+      y: (sx.y * manualMask.natural.h) / $("#manualEditCanvas").height,
+    };
+    const endNat = manualDisplayToNatural(e.clientX, e.clientY);
+    manualFinishRect(startNat, endNat);
+    manualMask.rectStart = null;
+    manualMask.rectCurrent = null;
+    manualRender();
+  }
+  manualMask.drawing = false;
+  manualMask.lastPos = null;
+  try { $("#manualEditCanvas").releasePointerCapture(e.pointerId); } catch (_) { /* ignore */ }
+}
+
+function manualSetTool(tool) {
+  manualMask.tool = tool;
+  document.querySelectorAll("#manualMaskToolbar .tool-btn").forEach((btn) => {
+    btn.classList.toggle("is-active", btn.dataset.tool === tool);
+  });
+  const st = $("#manualMaskStatus");
+  if (st) st.textContent = "Dibuja sobre la imagen para marcar el área del defecto.";
+}
+
+function manualClearMask() {
+  if (!manualMask.maskCanvas || !manualMask.current) return;
+  manualMask.maskCanvas.getContext("2d").clearRect(0, 0, manualMask.maskCanvas.width, manualMask.maskCanvas.height);
+  manualRender();
+  manualStageStatus("Máscara vaciada. Pinta el área donde quieres el defecto.");
+}
+
+// Convierte el brillo de la máscara importada (blanco/negro) a la
+// representación interna del editor: píxel blanco opaco = defecto,
+// transparente = zona vacía. Así queda lista para retocar con pincel/goma.
+function manualApplyImportedMask(draw) {
+  const W = manualMask.maskCanvas.width;
+  const H = manualMask.maskCanvas.height;
+  const ctx = manualMask.maskCanvas.getContext("2d");
+  const tmp = document.createElement("canvas");
+  tmp.width = W;
+  tmp.height = H;
+  const tctx = tmp.getContext("2d");
+  tctx.imageSmoothingEnabled = false;
+  tctx.drawImage(draw, 0, 0, W, H);
+  const src = tctx.getImageData(0, 0, W, H).data;
+  const out = ctx.createImageData(W, H);
+  for (let i = 0; i < W * H; i++) {
+    const r = src[i * 4], g = src[i * 4 + 1], b = src[i * 4 + 2];
+    const lum = 0.2126 * r + 0.7152 * g + 0.0722 * b;   // brillo = intensidad del defecto
+    out.data[i * 4] = 255;
+    out.data[i * 4 + 1] = 255;
+    out.data[i * 4 + 2] = 255;
+    out.data[i * 4 + 3] = lum;                          // alfa = brillo (0=vacío, 255=defecto)
+  }
+  ctx.clearRect(0, 0, W, H);
+  ctx.putImageData(out, 0, 0);
+  manualRender();
+}
+
+function manualImportMask(file) {
+  if (!manualMask.maskCanvas || !manualMask.current) {
+    manualStageStatus("Selecciona una imagen de origen antes de importar.", true);
+    return;
+  }
+  const reader = new FileReader();
+  reader.onload = () => {
+    const im = new Image();
+    im.onload = () => manualApplyImportedMask(im);
+    im.onerror = () => manualStageStatus("No se pudo leer la máscara importada.", true);
+    im.src = reader.result;
+  };
+  reader.onerror = () => manualStageStatus("No se pudo leer el archivo.", true);
+  reader.readAsDataURL(file);
+}
+
+function manualOnSourceChange() {
+  const sel = $("#manualSourceImage");
+  manualSetImage(sel ? sel.value : "");
+}
+
+function readManualForm() {
+  const fd = new FormData($("#formManual"));
+  const o = Object.fromEntries(fd.entries());
+  const num = (k, d) => (o[k] === undefined || o[k] === "") ? d : Number(o[k]);
+  return {
+    checkpoint: o.checkpoint || "",
+    object_class: (activeProject && activeProject.name) || "",
+    defect_type: o.defect_type || "",
+    run_name: o.run_name || undefined,
+    image: o.image || "",
+    mask_b64: manualMask.asDataUrlB64() || "",
+    total_images: num("total_images", 4),
+    num_samples: num("num_samples", 8),
+    steps: num("steps", 50),
+    guidance_scale: num("guidance_scale", 2.0),
+    batch_size: num("batch_size", 4),
+    lora_rank: num("lora_rank", 8),
+    lora_alpha: num("lora_alpha", 16),
+    dilate_mask: o.dilate_mask === "on",
+    prompt: o.prompt || undefined,
+  };
+}
+
+async function startManual(ev) {
+  ev.preventDefault();
+  const payload = readManualForm();
+  if (!payload.checkpoint) { window.alert("Selecciona un checkpoint entrenado."); return; }
+  if (!payload.object_class) { window.alert("Selecciona un proyecto activo."); return; }
+  if (!payload.image) { window.alert("Selecciona una imagen de origen."); return; }
+  if (!payload.mask_b64) { window.alert("Pinta una máscara sobre la imagen antes de generar."); return; }
+  if (!manualMask.hasPixels()) { window.alert("La máscara está vacía: pinta con el pincel el área del defecto."); return; }
+  try {
+    const res = await fetch(api("/api/infer/manual/start"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json();
+    if (!res.ok || !data.job_id) throw new Error(data.detail || data.message || ("HTTP " + res.status));
+    renderManualPreviews("", []);
+    $("#btnStopManual").dataset.jobId = data.job_id;
+    monitorJob("manual", data.job_id);
+  } catch (err) {
+    window.alert("No se pudo iniciar la inferencia manual: " + err.message);
+  }
+}
+
+async function stopManual() {
+  if (!monitors.manual) return;
+  const es = monitors.manual;
+  const jobId = $("#btnStopManual").dataset.jobId;
+  if (!jobId) return;
+  try { await fetch(api(`/api/jobs/${jobId}/stop`), { method: "POST" }); } catch (_) { /* ignore */ }
+  es.close();
+  monitors.manual = null;
+  setRunningUi("manual", false);
 }
 
 // ---------------------------------------------------------------- Validate checkpoints
@@ -955,7 +1393,7 @@ async function loadResults() {
         groups[stem] = groups[stem] || {};
         groups[stem][f.kind] = f;
       }
-      const stems = Object.keys(groups).sort();
+      const stems = Object.keys(groups).sort().reverse();
       if (!stems.length) {
         const empty = document.createElement("p");
         empty.className = "empty-state";
@@ -970,7 +1408,8 @@ async function loadResults() {
         if (!gen) continue;
         const orig = g.original ? api(`/files/generated/${r.object_class}/generated/${r.run}/${g.original.rel}`) : gen;
         const mask = g.mask ? api(`/files/generated/${r.object_class}/generated/${r.run}/${g.mask.rel}`) : gen;
-        const lpips = (r.status && r.status.images || []).find((im) => String(im.output_idx) === String(parseInt(stem, 10)))?.lpips_score;
+        const stemIdx = (stem.match(/_gen(\d+)$/) || [])[1];
+        const lpips = stemIdx == null ? null : (r.status && r.status.images || []).find((im) => String(im.output_idx) === String(parseInt(stemIdx, 10)))?.lpips_score;
         grid.appendChild(el(`
           <div class="triplet">
             <div class="triplet-labels"><span>Original</span><span>Máscara</span><span>Generado</span></div>
@@ -1065,6 +1504,53 @@ function initInferEvents() {
   $("#inferDefectType").addEventListener("change", () => {});
 }
 
+function initManualEvents() {
+  const form = $("#formManual");
+  if (!form) return;
+  form.addEventListener("submit", startManual);
+  $("#btnStopManual").addEventListener("click", stopManual);
+  $("#manualSourceImage").addEventListener("change", manualOnSourceChange);
+  const canvas = $("#manualEditCanvas");
+  if (canvas) {
+    canvas.addEventListener("pointerdown", manualOnPointerDown);
+    canvas.addEventListener("pointermove", manualOnPointerMove);
+    canvas.addEventListener("pointerup", manualOnPointerUp);
+    canvas.addEventListener("pointercancel", manualOnPointerUp);
+    canvas.addEventListener("pointerleave", () => {
+      manualMask.cursor = null;
+      manualRender();
+    });
+  }
+  const toolbar = $("#manualMaskToolbar");
+  if (toolbar) toolbar.addEventListener("click", (e) => {
+    const btn = e.target.closest(".tool-btn");
+    if (!btn) return;
+    if (btn.dataset.tool === "clear") manualClearMask();
+    else if (btn.dataset.tool === "import") {
+      const file = $("#manualImportFile");
+      if (file) file.click();
+    }
+    else manualSetTool(btn.dataset.tool);
+  });
+  const importFile = $("#manualImportFile");
+  if (importFile) importFile.addEventListener("change", () => {
+    if (importFile.files && importFile.files[0]) manualImportMask(importFile.files[0]);
+    importFile.value = "";
+  });
+  const brush = $("#manualBrushSize");
+  if (brush) {
+    brush.addEventListener("input", () => {
+      manualMask.brushSize = Number(brush.value);
+      const val = $("#manualBrushSizeValue");
+      if (val) val.textContent = brush.value + "px";
+      manualRender();
+    });
+  }
+  window.addEventListener("resize", () => {
+    if (manualMask.current) manualSyncCanvasBuffer();
+  });
+}
+
 function initDatasetEvents() {
   const goodBtn = $("#btnUploadGood");
   if (goodBtn) goodBtn.addEventListener("click", uploadGood);
@@ -1103,6 +1589,7 @@ checkSystemPill();
 resetTrainCharts();
 initTrainEvents();
 initInferEvents();
+initManualEvents();
 initValidateEvents();
 initDatasetEvents();
 initProjectEvents();

@@ -19,6 +19,18 @@ window.HMI.batchmerge = (() => {
 
   const { bus } = window.HMI;
 
+  // Ver nota en merge.js: el backend puede responder con HTML en errores
+  // (p. ej. 403 "No hay proyecto activo"), lo que rompía res.json().
+  async function safeJson(res) {
+    const text = await res.text();
+    let data = null;
+    try { data = JSON.parse(text); } catch (_) { data = null; }
+    if (!data || typeof data !== "object") {
+      data = { ok: false, error: `No se pudo fusionar (HTTP ${res.status}). ¿Hay un proyecto abierto?` };
+    }
+    return data;
+  }
+
   function escapeHtml(s) {
     return String(s == null ? "" : s)
       .replace(/&/g, "&amp;").replace(/</g, "&lt;")
@@ -145,7 +157,7 @@ window.HMI.batchmerge = (() => {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ file: f.path }),
         });
-        const data = await res.json();
+        const data = await safeJson(res);
         if (!res.ok || !data.ok) {
           data.ok = false;
           data.error = data.error || `HTTP ${res.status}`;

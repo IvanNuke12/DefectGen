@@ -300,6 +300,63 @@ class JobManager:
         }
         return self._spawn("infer", "inference.py", cli_args, output_dir, meta)
 
+    def start_manual_inference(self, params: Dict[str, Any]) -> Job:
+        """Inferencia manual: imagen única + máscara pintada a mano.
+
+        Usa el MISMO inference.py pero en modo single image (--image_path +
+        --mask_path). La salida se guarda en <proyecto>/generated/<run>, con el
+        mismo esquema de ficheros (*_generated/_original/_mask + inference_log)
+        que la generación automática, de modo que aparece en Resultados y es
+        fusionable desde el HMI. total_images permite generar varias variantes
+        con la misma máscara para que el usuario elija la preferida."""
+        checkpoint = params["checkpoint"]
+        run_name = params.get("run_name") or f"{params['object_class']}_manual"
+        safe_name = "".join(c for c in run_name if c.isalnum() or c in ("-", "_")).strip() or "run"
+        # Los resultados viven dentro de la carpeta del proyecto (igual que el resto).
+        project_dir = DATA_DIR / params["object_class"]
+        if params.get("_output_dir"):
+            output_dir = Path(params["_output_dir"])
+            output_dir.mkdir(parents=True, exist_ok=True)
+        else:
+            output_dir = project_dir / "generated" / f"{safe_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+
+        total_images = int(params.get("total_images", 4))
+        if total_images < 1:
+            total_images = 1
+
+        cli_args = [
+            "--checkpoint", checkpoint,
+            "--output_dir", str(output_dir),
+            "--object_class", params["object_class"],
+            "--class_name", params.get("class_name") or params["object_class"],
+            "--image_path", params["image_path"],
+            "--mask_path", params["mask_path"],
+            "--total_images", str(total_images),
+            "--num_samples", str(params.get("num_samples", 8)),
+            "--steps", str(params.get("steps", 50)),
+            "--guidance_scale", str(params.get("guidance_scale", 2.0)),
+            "--batch_size", str(params.get("batch_size", 4)),
+            "--lora_rank", str(params.get("lora_rank", 8)),
+            "--lora_alpha", str(params.get("lora_alpha", 16)),
+            "--dilate_mask", "True" if params.get("dilate_mask") else "False",
+            "--mask_kernel_size", str(params.get("mask_kernel_size", 3)),
+        ]
+        if params.get("defect_type"):
+            cli_args += ["--defect_type", params["defect_type"]]
+        if params.get("prompt"):
+            cli_args += ["--prompt", params["prompt"]]
+
+        meta = {
+            "object_class": params["object_class"],
+            "class_name": params.get("class_name") or params["object_class"],
+            "defect_type": params.get("defect_type"),
+            "run_name": run_name,
+            "checkpoint": checkpoint,
+            "total_images": total_images,
+            "manual": True,
+        }
+        return self._spawn("manual", "inference.py", cli_args, output_dir, meta)
+
     def start_validation(self, params: Dict[str, Any]) -> Job:
         """Valida los checkpoints de un run de entrenamiento: para cada
         checkpoint genera un lote fijo determinista (validate_checkpoints.py),

@@ -88,6 +88,19 @@ class AttentionStoreProcessor(AttnProcessor):
         
         return hidden_states
 
+def _gaussian_blur_tensor(x, kernel_size=33, sigma=8.0):
+    """Desenfoque gaussiano 2D separado sobre un tensor [B,C,H,W] (sin depender
+    de torchvision). Se usa para suavizar (feather) el borde de la máscara."""
+    import math
+    k = (kernel_size - 1) // 2
+    axis = torch.arange(-k, k + 1, dtype=torch.float32, device=x.device)
+    kernel_1d = torch.exp(-(axis ** 2) / (2 * sigma ** 2))
+    kernel_1d = kernel_1d / (kernel_1d.sum() + 1e-8)
+    kernel_2d = kernel_1d[:, None] * kernel_1d[None, :]
+    kernel_2d = kernel_2d.view(1, 1, kernel_size, kernel_size).to(x.device).to(x.dtype)
+    return F.conv2d(x, kernel_2d, padding=k)
+
+
 class DefectFillModel(nn.Module):
     def __init__(self, device="cuda", lora_rank=8, lora_alpha=16, seed=42, placeholder_token="<defect>"):
         super().__init__()
@@ -406,5 +419,15 @@ class DefectFillModel(nn.Module):
         latents = latents / self.pipeline.vae.config.scaling_factor
         with torch.no_grad():
             images = self.pipeline.vae.decode(latents).sample
-        
+
+        # ========== KEY STEP: Composición exacta en píxeles con feather ==========
+        # Fuera de la máscara se coloca EXACTAMENTE el píxel original (imagen de
+        # entrada, en [-1,1]), con una transición suave (gaussian feather) en el
+        # borde. Esto evita el cambio de tono/contraste del fondo que aparecía al
+        # dejar que el VAE reconstruyera todo el mapa de latentes con su deriva.
+        H, W = images.shape[-2:]
+        mask_full = F.interpolate(mask, size=(H, W), mode='bilinear', align_corners=False)
+        mask_feathered = _gaussian_blur_tensor(mask_full, kernel_size=33, sigma=8.0)
+        images = images * mask_feathered + image * (1 - mask_feathered)
+
         return (images + 1) / 2  # Convert back to [0, 1] range

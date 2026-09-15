@@ -31,7 +31,7 @@
     return tab === "crop" ? "preprocesado" : tab === "train" ? "entrenamiento" : "postprocesado";
   }
 
-  // ---- Proyecto activo (compartido con defectfill/HMI) ----
+  // ---- Proyecto activo (compartido con webapp/HMI) ----
   function refreshActiveProject() {
     fetch("/hmi/api/project/active")
       .then((r) => r.json())
@@ -69,11 +69,18 @@
     });
     Object.entries(el.frames).forEach(([key, frame]) => {
       frame.classList.toggle("hidden", key !== tab);
-      // OJO: frame.src con atributo vacío devuelve la URL base (truthy),
-      // así que se comprueba el atributo real para cargar una sola vez.
-      if (key === tab && !frame.getAttribute("src")) frame.setAttribute("src", urls[key]);
     });
-    el.status.textContent = `Cargando ${label(tab)}: ${urls[tab]}`;
+    // Cargar el iframe SOLO la primera vez que se selecciona una pestaña.
+    // Recargarlo en cada cambio destruye las conexiones SSE y pierde la
+    // visualización del progreso de entrenamiento/inferencia en curso.
+    const f = el.frames[tab];
+    if (!f.getAttribute("src") || f.getAttribute("src") === "about:blank") {
+      f.setAttribute("src", urls[tab]);
+      el.status.textContent = `Cargando ${label(tab)}: ${urls[tab]}`;
+    } else {
+      el.status.textContent = `Conectado: ${urls[tab]}`;
+      el.status.classList.add("ok");
+    }
   }
 
   el.tabs.forEach((t) => t.addEventListener("click", () => activate(t.dataset.tab)));

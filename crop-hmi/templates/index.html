@@ -148,7 +148,16 @@
           <input type="range" id="cropSlider" min="20" max="500" value="250">
           <input type="number" id="cropSizeInput" class="slider-input mono" min="1" max="500" value="250">
         </div>
-        <div class="slider-hint">px · cuadrado centrado en el clic</div>
+        <div class="slider-hint">px · alto del recorte (cuadrado si no se amplía)</div>
+        <label class="switch-label" style="margin-top:10px">
+          <input type="checkbox" id="amplifyCrop">
+          <span>Ampliar BBOX (crop panorámico)</span>
+        </label>
+        <div id="amplifyWidthRow" class="slider-row" style="margin-top:8px;display:none">
+          <input type="range" id="amplifySlider" min="2" max="8" value="3" step="1">
+          <input type="number" id="amplifyFactorInput" class="slider-input mono" min="1" max="20" value="3">
+        </div>
+        <div id="amplifyHint" class="slider-hint" style="display:none">Amplitud = alto del recorte × factor. Orientación automática (horizontal/vertical).</div>
       </section>
 
       <section class="panel-section">
@@ -222,6 +231,15 @@
         </div>
         <div class="annotation-status" id="maskEditorStatus">Dibuja sobre la imagen para corregir la máscara.</div>
       </section>
+
+      <section class="panel-section">
+        <h2>Exportar máscaras</h2>
+        <div class="edit-actions">
+          <button type="button" class="btn btn-secondary" id="exportMasksCocoBtn">COCO JSON</button>
+          <button type="button" class="btn btn-secondary" id="exportMasksYoloBtn">YOLO (ZIP)</button>
+        </div>
+        <div class="annotation-status">Descarga las máscaras guardadas del proyecto activo.</div>
+      </section>
     </div>
 
   </aside>
@@ -237,6 +255,6 @@
 <script src="{{ APP_SUBPATH }}{{ url_for('static', filename='js/common.js') }}?v=21"></script>
 <script src="{{ APP_SUBPATH }}{{ url_for('static', filename='js/crop_app.js') }}?v=23"></script>
   <script src="{{ APP_SUBPATH }}{{ url_for('static', filename='js/labels.js') }}?v=22"></script>
-<script src="{{ APP_SUBPATH }}{{ url_for('static', filename='js/app.js') }}?v=25"></script>
+<script src="{{ APP_SUBPATH }}{{ url_for('static', filename='js/app.js') }}?v=26"></script>
 </body>
 </html>

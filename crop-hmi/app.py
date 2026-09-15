@@ -72,6 +72,8 @@ DEFAULT_CONFIG = {
     "annotation_format": "auto",
     "overlay_enabled": True,
     "overlay_opacity": 35,
+    "amplify": False,
+    "amplify_factor": 3,
 }
 
 # Subcarpetas que se crean automáticamente dentro de cada proyecto. Las tres
@@ -781,7 +783,8 @@ def api_config():
         data = request.get_json(force=True, silent=True) or {}
         cfg = load_config()
         for key in ("crop_size", "annotations_enabled", "annotation_format",
-                    "annotation_path", "overlay_enabled", "overlay_opacity"):
+                    "annotation_path", "overlay_enabled", "overlay_opacity",
+                    "amplify", "amplify_factor"):
             if key in data:
                 cfg[key] = data[key]
         save_config(cfg)
@@ -1115,7 +1118,7 @@ def api_project_delete_image():
                 _safe_delete(Path(p))
     # Fallback: si registros antiguos no tienen campos dataset, limpiar por glob
     img_stem = Path(filename).stem
-    _clear_previous_exports(project_dir, img_stem)
+    _clear_previous_exports(project_dir, img_stem, log_entries)
 
     removed["log"] = _remove_log_entries(filename, cfg)
 
@@ -1425,10 +1428,21 @@ def api_crop():
         im = im.convert("RGB")
         w, h = im.size
         cs = max(1, min(crop_size, w, h))
-        half = cs // 2
-        x1 = max(0, min(cx - half, w - cs))
-        y1 = max(0, min(cy - half, h - cs))
-        x2, y2 = x1 + cs, y1 + cs
+
+        # Modo panorámico: el cliente envía el box real (rectángulo más ancho
+        # que alto o viceversa). Mientras tanto, modo cuadrado = cs×cs centrado.
+        amplify = bool(data.get("amplify"))
+        if amplify and all(k in data for k in ("box_x", "box_y", "box_w", "box_h")):
+            cw = max(1, min(int(round(float(data["box_w"]))), w))
+            ch = max(1, min(int(round(float(data["box_h"]))), h))
+            bx = max(0, min(int(round(float(data["box_x"]))), w - cw))
+            by = max(0, min(int(round(float(data["box_y"]))), h - ch))
+            x1, y1, x2, y2 = bx, by, bx + cw, by + ch
+        else:
+            half = cs // 2
+            x1 = max(0, min(cx - half, w - cs))
+            y1 = max(0, min(cy - half, h - cs))
+            x2, y2 = x1 + cs, y1 + cs
         crop = im.crop((x1, y1, x2, y2))
 
         # Fuente de la máscara: prioridad a la máscara editada a mano
@@ -1523,7 +1537,7 @@ def api_crop():
     }
     append_log(record, cfg)
 
-    return jsonify({"ok": True, **record})
+    return jsonify({"ok": True, **record, "crop_w": x2 - x1, "crop_h": y2 - y1})
 
 
 @app.route("/api/crops")
@@ -1703,7 +1717,11 @@ def _merge_one_generated(cfg, run_dir, gen_file, source_by_idx, index):
             edited.load()
         stem = Path(gen_file).stem
         suffix = Path(gen_file).suffix or ".png"
-        dest_path = merge_dir_of(cfg) / f"{stem}_merged_{Path(crop_name).stem}{suffix}"
+        # Organiza los resultados por run (como en generated/), dentro de merge:
+        # <proyecto>/merge/<run>/<archivo>_merged_<crop>.png. Así no se mezclan
+        # ni se sobreescriben los merges de distintos runs.
+        run_name = Path(run_dir).name or "run"
+        dest_path = merge_dir_of(cfg) / run_name / f"{stem}_merged_{Path(crop_name).stem}{suffix}"
         merged = _merge_one(cfg, rec, edited, dest_mode="new", dest_path=dest_path)
         rel = rel_path(
             merged.relative_to(merge_dir_of(cfg))
@@ -1872,6 +1890,174 @@ def api_merge_generated():
     if not result["ok"]:
         return jsonify(result), 404 if result.get("error", "").startswith("No hay") else 400
     return jsonify(result)
+
+
+# --------------------------------------------------------------------------
+# Exportación de máscaras editadas (pestaña Etiquetado) a COCO JSON / YOLO
+# --------------------------------------------------------------------------
+def _resolve_mask_images(input_folder):
+    """stem -> lista de rutas relativas de imágenes en `input_folder`."""
+    by_stem = {}
+    for rel in list_image_files(input_folder):
+        by_stem.setdefault(Path(rel).stem, []).append(rel)
+    return by_stem
+
+
+def _mask_binary(mask):
+    """Devuelve la máscara como array uint8 0/1 y (w, h)."""
+    import numpy as np
+
+    arr = np.asarray(mask.convert("L"), dtype=np.uint8)
+    return (arr > 0).astype(np.uint8), arr.shape[1], arr.shape[0]
+
+
+def _mask_coco_segmentation(mask):
+    """Segmentación COCO RLE comprimida + area de una máscara binaria."""
+    import numpy as np
+    from pycocotools import mask as mask_utils
+
+    binary, width, height = _mask_binary(mask)
+    rle = mask_utils.encode(np.asfortranarray(binary))
+    rle["counts"] = rle["counts"].decode("ascii")
+    return {"counts": rle["counts"], "size": [height, width]}, int(binary.sum())
+
+
+def _mask_bbox(mask):
+    """Bounding box [x, y, w, h] de los píxeles de defecto."""
+    import numpy as np
+
+    binary, width, height = _mask_binary(mask)
+    ys, xs = np.nonzero(binary)
+    if ys.size == 0:
+        return [0, 0, width, height], False
+    x1, y1 = int(xs.min()), int(ys.min())
+    x2, y2 = int(xs.max()), int(ys.max())
+    return [x1, y1, x2 - x1 + 1, y2 - y1 + 1], True
+
+
+def _mask_yolo_line(mask, width, height):
+    """Línea YOLO normalizada `0 cx cy w h` de la bbox de la máscara."""
+    import numpy as np
+
+    binary, _, _ = _mask_binary(mask)
+    ys, xs = np.nonzero(binary)
+    if ys.size == 0:
+        return None
+    x1, y1 = float(xs.min()), float(ys.min())
+    x2, y2 = float(xs.max()), float(ys.max())
+    cx = (x1 + x2) / 2 / width
+    cy = (y1 + y2) / 2 / height
+    w = (x2 - x1 + 1) / width
+    h = (y2 - y1 + 1) / height
+    return f"0 {cx:.6f} {cy:.6f} {w:.6f} {h:.6f}"
+
+
+def _edited_masks():
+    """(mask, stem, image_rel, meta) por cada máscara editada del proyecto activo."""
+    project_dir = Path(_ACTIVE_PROJECT["project_dir"])
+    masks_dir = project_dir / EDIT_MASK_SUBDIR
+    images_by_stem = _resolve_mask_images(_ACTIVE_PROJECT["input_folder"])
+    meta = _read_project_meta(project_dir)
+    category = meta.get("active_defect_type") or "defect"
+    for mask_path in sorted(masks_dir.glob("*_mask.png")):
+        stem = mask_path.name[: -len("_mask.png")]
+        try:
+            with Image.open(mask_path) as im:
+                mask = im.copy()
+        except OSError as exc:
+            continue
+        matches = images_by_stem.get(stem, [])
+        image_rel = matches[0] if matches else None
+        yield mask, stem, image_rel, category, mask_path
+
+
+@app.route("/api/export/masks")
+def api_export_masks():
+    """Exporta las máscaras editadas en la pestaña Etiquetado.
+
+    format=coco (por defecto): JSON COCO con segmentación RLE + bbox,
+    reimportable vía POST /api/project/upload-coco.
+    format=yolo: ZIP con un <stem>.txt por máscara (bbox normalizada),
+    reimportable vía POST /api/project/upload-labels.
+    """
+    _require_project()
+    fmt = request.args.get("format", "coco").casefold()
+    if fmt not in ("coco", "yolo"):
+        return _json_error("Formato no soportado (coco|yolo).", 400)
+
+    base = _ACTIVE_PROJECT["name"] if _ACTIVE_PROJECT else "proyecto"
+    masks = list(_edited_masks())
+    if not masks:
+        return _json_error("Todavía no hay máscaras editadas en este proyecto.", 404)
+
+    warnings = []
+    if fmt == "coco":
+        try:
+            import numpy as np  # noqa: F401
+            from pycocotools import mask as mask_utils  # noqa: F401
+        except ImportError:
+            return _json_error("Falta numpy/pycocotools para exportar COCO.", 500)
+
+        images = []
+        annotations = []
+        categories = []
+        category_ids = {}
+        image_id = 0
+        ann_id = 0
+        for mask, stem, image_rel, category, _path in masks:
+            if not image_rel:
+                warnings.append(f"{stem}: no se encontró su imagen en images/.")
+                continue
+            image_id += 1
+            images.append({"id": image_id, "file_name": image_rel,
+                           "width": mask.width, "height": mask.height})
+            segmentation, area = _mask_coco_segmentation(mask)
+            bbox, _has_defect = _mask_bbox(mask)
+            if category not in category_ids:
+                category_ids[category] = len(category_ids) + 1
+                categories.append({"id": category_ids[category], "name": category, "supercategory": ""})
+            ann_id += 1
+            annotations.append({
+                "id": ann_id, "image_id": image_id,
+                "category_id": category_ids[category],
+                "segmentation": segmentation, "area": area, "bbox": bbox,
+                "iscrowd": 0,
+            })
+        payload = {
+            "licenses": [],
+            "info": {"description": "Máscaras editadas del proyecto %s" % base},
+            "categories": categories,
+            "images": images,
+            "annotations": annotations,
+        }
+        buf = io.BytesIO(json.dumps(payload, ensure_ascii=False).encode("utf-8"))
+        buf.seek(0)
+        return send_file(buf, as_attachment=True,
+                         download_name=f"{base}_masks_annotations.json",
+                         mimetype="application/json")
+
+    # YOLO: ZIP con un .txt por imagen (bbox normalizada).
+    import zipfile
+
+    buf = io.BytesIO()
+    written = 0
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for mask, stem, image_rel, _category, _path in masks:
+            if not image_rel:
+                warnings.append(f"{stem}: no se encontró su imagen en images/.")
+                continue
+            line = _mask_yolo_line(mask, mask.width, mask.height)
+            if line is None:
+                warnings.append(f"{stem}: máscara vacía; se omite.")
+                continue
+            zf.writestr(f"{stem}.txt", line + "\n")
+            written += 1
+    if written == 0:
+        return _json_error("No se pudo exportar: ninguna máscara válida.", 404)
+    buf.seek(0)
+    return send_file(buf, as_attachment=True,
+                     download_name=f"{base}_labels.zip",
+                     mimetype="application/zip")
 
 
 @app.route("/api/export/<fmt>")

@@ -3,6 +3,7 @@ import io
 import json
 import tempfile
 import unittest
+import zipfile
 from pathlib import Path
 from unittest import mock
 
@@ -569,6 +570,42 @@ class PipelineDatasetTests(unittest.TestCase):
         bad2 = self.client.get("/api/generated/file?path=" + secret.name)
         self.assertIn(bad2.status_code, (400, 404))
 
+    def test_generated_sin_log_resuelve_source_por_nombre(self):
+        """Run interrumpido sin inference_log.json: el source del crop se
+        resuelve por el patrón '<crop>_genNNNN_generated.png' del nombre."""
+        rec = self._make_project_with_crop(enable_labels=False)
+        run = self.project / "generated" / "run_incompleto"
+        run.mkdir(parents=True)
+        crop_name = rec["crop_name"]  # p. ej. img_crop_1.png
+        stem = Path(crop_name).stem  # p. ej. img_crop_1
+        Image.new("RGB", (10, 10), "blue").save(run / f"{stem}_gen0000_generated.png")
+        Image.new("RGB", (10, 10), "red").save(run / f"{stem}_gen0001_generated.png")
+
+        runs = self.client.get("/api/generated/runs").get_json()
+        run_info = runs["runs"][0]
+        self.assertEqual(run_info["run"], "run_incompleto")
+        self.assertEqual([f["source"] for f in run_info["files"]],
+                         [crop_name, crop_name])
+
+    def test_merge_generated_sin_log_resuelve_por_nombre(self):
+        """_merge_one_generated resuelve el crop sin inference_log.json usando
+        el nombre del archivo generado ('<crop>_genNNNN_generated.png')."""
+        rec = self._make_project_with_crop(enable_labels=False)
+        run = self.project / "generated" / "run_incompleto"
+        run.mkdir(parents=True)
+        crop_name = rec["crop_name"]
+        stem = Path(crop_name).stem
+        gen = run / f"{stem}_gen0000_generated.png"
+        Image.new("RGB", (10, 10), "blue").save(gen)
+
+        res = self.client.post("/api/merge/generated", json={
+            "file": f"run_incompleto/{gen.name}",
+        })
+        payload = res.get_json()
+        self.assertTrue(payload["ok"], payload.get("error"))
+        self.assertEqual(payload["source"], crop_name)
+        self.assertTrue(payload["merged_path"])
+
     def test_upload_classifica_buenas_y_malas(self):
         """Subidas con dataset_kind van a images/ + test/good (buenas) o
         train/defective/<tipo> (malas), y /api/images las clasifica."""
@@ -609,6 +646,170 @@ class PipelineDatasetTests(unittest.TestCase):
         self.assertEqual(kinds["buena.png"], "good")
         self.assertEqual(kinds["mala.png"], "defect")
         self.assertEqual(kinds["neutra.png"], "")
+
+
+class MaskExportTests(unittest.TestCase):
+    """Exportación de máscaras editadas (pestaña Etiquetado) a COCO JSON / YOLO."""
+
+    def setUp(self):
+        self.tempdir = tempfile.TemporaryDirectory()
+        self.root = Path(self.tempdir.name)
+        self.project = self.root / "proyecto"
+        self.config_path = self.root / "config.json"
+        self._prev_patches = [
+            mock.patch.object(crop_app, "_ACTIVE_PROJECT", None),
+            mock.patch.object(crop_app, "CONFIG_PATH", self.config_path),
+            mock.patch.object(crop_app, "RECENT_PROJECTS_PATH",
+                              self.root / "projects_recent.json"),
+        ]
+        for p in self._prev_patches:
+            p.start()
+        self.client = crop_app.app.test_client()
+        self.client.post("/api/project/create",
+                         json={"name": "proyecto", "parent": str(self.root)})
+        # Imagen 100x80 con un defecto rectangular (30..59, 20..49).
+        img = Image.new("RGB", (100, 80), "white")
+        self.image_path = self.project / "images" / "img.png"
+        img.save(self.image_path)
+        mask = Image.new("L", (100, 80), 0)
+        for x in range(30, 60):
+            for y in range(20, 50):
+                mask.putpixel((x, y), 255)
+        masks_dir = self.project / "masks"
+        masks_dir.mkdir(exist_ok=True)
+        self.mask_path = masks_dir / "img_mask.png"
+        mask.save(self.mask_path)
+
+    def tearDown(self):
+        for p in self._prev_patches:
+            p.stop()
+        self.tempdir.cleanup()
+
+    def test_export_masks_coco_json(self):
+        r = self.client.get("/api/export/masks?format=coco")
+        self.assertEqual(r.status_code, 200, r.get_data(as_text=True))
+        payload = r.get_json()
+        self.assertEqual(len(payload["images"]), 1)
+        self.assertEqual(payload["images"][0]["file_name"], "img.png")
+        self.assertEqual(payload["images"][0]["width"], 100)
+        self.assertEqual(len(payload["annotations"]), 1)
+        ann = payload["annotations"][0]
+        self.assertEqual(ann["bbox"], [30, 20, 30, 30])
+        self.assertEqual(ann["area"], 30 * 30)
+        self.assertEqual(ann["segmentation"]["size"], [80, 100])
+        self.assertEqual(len(payload["categories"]), 1)
+        self.assertEqual(payload["categories"][0]["name"], "defect")
+
+    def test_export_masks_yolo_zip(self):
+        r = self.client.get("/api/export/masks?format=yolo")
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.mimetype, "application/zip")
+        with zipfile.ZipFile(io.BytesIO(r.data)) as zf:
+            self.assertIn("img.txt", zf.namelist())
+            line = zf.read("img.txt").decode("utf-8").strip()
+        # bbox (30..59, 20..49) normalizada: cx=(30+59)/2/100=0.445, cy=0.43125.
+        parts = line.split()
+        self.assertEqual(parts[0], "0")
+        self.assertAlmostEqual(float(parts[1]), 0.445, places=3)
+        self.assertAlmostEqual(float(parts[2]), 0.43125, places=3)
+        self.assertAlmostEqual(float(parts[3]), 0.30, places=3)
+        self.assertAlmostEqual(float(parts[4]), 0.375, places=3)
+
+    def test_export_masks_sin_mascaras_devuelve_404(self):
+        self.mask_path.unlink()
+        r = self.client.get("/api/export/masks?format=coco")
+        self.assertEqual(r.status_code, 404)
+
+    def test_export_masks_formato_invalido(self):
+        r = self.client.get("/api/export/masks?format=xyz")
+        self.assertEqual(r.status_code, 400)
+
+    def test_export_masks_coco_roundtrip_es_reimportable(self):
+        """El JSON COCO exportado se puede subir de vuelta y re-construir la
+        máscara (mismo pipeline que upload-coco + build_mask)."""
+        r = self.client.get("/api/export/masks?format=coco")
+        payload = r.get_json()
+        annotations_json = self.root / "roundtrip.json"
+        annotations_json.write_text(json.dumps(payload), encoding="utf-8")
+        mask, metadata = build_mask(str(annotations_json), "coco", "img.png", (100, 80))
+        self.assertEqual(mask.getpixel((50, 40)), 255)
+        self.assertEqual(mask.getpixel((10, 10)), 0)
+        self.assertEqual(metadata["annotation_count"], 1)
+
+
+class DeleteImageTests(unittest.TestCase):
+    """Borrado de imagen: limpia imagen, crops, máscaras y exports del dataset
+    sin errores (regresión del TypeError por argumentos de _clear_previous_exports)."""
+
+    def setUp(self):
+        self.tempdir = tempfile.TemporaryDirectory()
+        self.root = Path(self.tempdir.name)
+        self.project = self.root / "proyecto"
+        self.config_path = self.root / "config.json"
+        self._prev_patches = [
+            mock.patch.object(crop_app, "_ACTIVE_PROJECT", None),
+            mock.patch.object(crop_app, "CONFIG_PATH", self.config_path),
+            mock.patch.object(crop_app, "RECENT_PROJECTS_PATH",
+                              self.root / "projects_recent.json"),
+        ]
+        for p in self._prev_patches:
+            p.start()
+        self.client = crop_app.app.test_client()
+        self.client.post("/api/project/create",
+                         json={"name": "proyecto", "parent": str(self.root)})
+        self.image_path = self.project / "images" / "img.png"
+        Image.new("RGB", (100, 80), "white").save(self.image_path)
+        # Máscara editada a mano para que el crop genere defect + dataset.
+        mask = Image.new("L", (100, 80), 0)
+        for x in range(30, 60):
+            for y in range(20, 50):
+                mask.putpixel((x, y), 255)
+        masks_dir = self.project / "masks"
+        masks_dir.mkdir(exist_ok=True)
+        mask.save(masks_dir / "img_mask.png")
+
+    def tearDown(self):
+        for p in self._prev_patches:
+            p.stop()
+        self.tempdir.cleanup()
+
+    def _make_crop(self):
+        rec = self.client.post("/api/crop", json={
+            "filename": "img.png", "cx": 50, "cy": 40, "crop_size": 40,
+        }).get_json()
+        self.assertEqual(rec["crop_name"], "img_crop_1.png")
+        return rec
+
+    def test_delete_image_devuelve_ok_y_limpia_sin_error(self):
+        rec = self._make_crop()
+        self.assertTrue(rec["mask_output_path"])
+        crop_file = Path(rec["output_path"])
+        mask_file = Path(rec["mask_output_path"])
+        dataset_file = Path(rec["dataset_output_path"])
+        self.assertTrue(crop_file.exists())
+        self.assertTrue(mask_file.exists())
+
+        r = self.client.post("/api/project/delete-image", json={"filename": "img.png"})
+        payload = r.get_json()
+        self.assertEqual(r.status_code, 200, payload)
+        self.assertTrue(payload["ok"])
+        # La imagen y los recortes ya no existen.
+        self.assertFalse(self.image_path.exists())
+        self.assertFalse(crop_file.exists())
+        self.assertFalse(mask_file.exists())
+        self.assertFalse(dataset_file.exists())
+        # La galería ya no la lista.
+        imgs = self.client.get("/api/images").get_json()["images"]
+        self.assertEqual(imgs, [])
+
+    def test_delete_image_sin_recortes(self):
+        r = self.client.post("/api/project/delete-image", json={"filename": "img.png"})
+        self.assertEqual(r.status_code, 200, r.get_json())
+        self.assertFalse(self.image_path.exists())
+
+    def test_delete_image_inexistente_devuelve_404(self):
+        r = self.client.post("/api/project/delete-image", json={"filename": "no.png"})
+        self.assertEqual(r.status_code, 404)
 
 
 if __name__ == "__main__":

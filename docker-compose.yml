@@ -77,6 +77,8 @@ services:
       - NVIDIA_VISIBLE_DEVICES=all
       - PYTHONUNBUFFERED=1
       - HF_TOKEN=${HF_TOKEN:-}
+      - HF_HOME=/app/.cache/huggingface
+      - TRANSFORMERS_CACHE=/app/.cache/huggingface
       - PROJECTS_ROOT=/app/projects
       # Caché de pesos torchvision/LPIPS (vgg16 etc.) persistente: evita
       # re-descargar ~553 MB en cada recreación del contenedor.

@@ -33,6 +33,8 @@
     opacityValue: document.getElementById("opacityValue"),
 
     exportCsvBtn: document.getElementById("exportCsvBtn"),
+    exportMasksCocoBtn: document.getElementById("exportMasksCocoBtn"),
+    exportMasksYoloBtn: document.getElementById("exportMasksYoloBtn"),
     statusMessage: document.getElementById("statusMessage"),
   };
 
@@ -478,6 +480,9 @@
     el.opacitySlider.addEventListener("input", updateOverlayStyle);
 
     el.exportCsvBtn.addEventListener("click", () => { window.location.href = window.HMI.api("/api/export/csv"); });
+
+    el.exportMasksCocoBtn.addEventListener("click", () => { window.location.href = window.HMI.api("/api/export/masks?format=coco"); });
+    el.exportMasksYoloBtn.addEventListener("click", () => { window.location.href = window.HMI.api("/api/export/masks?format=yolo"); });
 
     bus.on("status", setStatus);
 

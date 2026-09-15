@@ -22,6 +22,11 @@ window.HMI.crop = (() => {
 
     cropSlider: document.getElementById("cropSlider"),
     cropSizeInput: document.getElementById("cropSizeInput"),
+    amplifyToggle: document.getElementById("amplifyCrop"),
+    amplifySlider: document.getElementById("amplifySlider"),
+    amplifyFactorInput: document.getElementById("amplifyFactorInput"),
+    amplifyWidthRow: document.getElementById("amplifyWidthRow"),
+    amplifyHint: document.getElementById("amplifyHint"),
   };
 
   const state = {
@@ -29,6 +34,8 @@ window.HMI.crop = (() => {
     filterText: "",
     currentIndex: -1,
     cropSize: 250,
+    amplify: false,
+    amplifyFactor: 3,
     lastNatural: null,
     busy: false,
   };
@@ -278,23 +285,50 @@ window.HMI.crop = (() => {
     const rect = displayRectOfImage();
     if (rect.width === 0 || rect.height === 0) return;
 
-    const box = clampBox(nx, ny, state.cropSize, im.width, im.height);
+    const box = computeCropBox(nx, ny, im.width, im.height);
     const scaleX = rect.width / im.width;
     const scaleY = rect.height / im.height;
 
     el.reticle.style.display = "block";
     el.reticle.style.left = box.x1 * scaleX + "px";
     el.reticle.style.top = box.y1 * scaleY + "px";
-    el.reticle.style.width = box.cs * scaleX + "px";
-    el.reticle.style.height = box.cs * scaleY + "px";
+    el.reticle.style.width = (box.x2 - box.x1) * scaleX + "px";
+    el.reticle.style.height = (box.y2 - box.y1) * scaleY + "px";
 
     el.hud.style.display = "block";
-    el.hud.style.left = (box.x1 + box.cs / 2) * scaleX + "px";
+    el.hud.style.left = (box.x1 + (box.x2 - box.x1) / 2) * scaleX + "px";
     el.hud.style.top = box.y1 * scaleY + "px";
-    el.hud.textContent = `${box.x1},${box.y1} · ${box.cs}×${box.cs}px`;
+    el.hud.textContent = `${box.x1},${box.y1} · ${box.x2 - box.x1}×${box.y2 - box.y1}px`;
 
     state.lastNatural = { nx, ny };
     return box;
+  }
+
+  // Calcula el bounding box del recorte. Con "Ampliar BBOX" activo usa un
+  // rectángulo panorámico (ancho = alto × factor, alto = cropSize) en lugar de
+  // un cuadrado, orientado según la proporción de la imagen.
+  function computeCropBox(nx, ny, w, h) {
+    const cs = Math.max(1, Math.min(Math.round(state.cropSize), w, h));
+    if (!state.amplify) return clampBox(nx, ny, cs, w, h);
+
+    const factor = Math.max(1, Number(state.amplifyFactor) || 1);
+    // Orientar la ampliación: horizontal si la imagen es más ancha que alta,
+    // vertical en caso contrario (cubre BBOX ancho en latas panorámicas).
+    const landscape = w >= h;
+    let cw, ch;
+    if (landscape) {
+      cw = cs * factor;
+      ch = cs;
+    } else {
+      cw = cs;
+      ch = cs * factor;
+    }
+    cw = Math.min(cw, w);
+    ch = Math.min(ch, h);
+
+    const x1 = Math.max(0, Math.min(Math.round(nx) - Math.floor(cw / 2), w - cw));
+    const y1 = Math.max(0, Math.min(Math.round(ny) - Math.floor(ch / 2), h - ch));
+    return { x1, y1, x2: x1 + cw, y2: y1 + ch };
   }
 
   function flashSaved() {
@@ -354,10 +388,20 @@ window.HMI.crop = (() => {
 
       state.busy = true;
       try {
+        const box = computeCropBox(nx, ny, im.width, im.height);
+        const payload = {
+          filename: im.filename,
+          cx: nx,
+          cy: ny,
+          crop_size: state.cropSize,
+          amplify: state.amplify,
+          // En modo panorámico el backend usa el box real calculado en el cliente
+          ...(state.amplify ? { box_x: box.x1, box_y: box.y1, box_w: box.x2 - box.x1, box_h: box.y2 - box.y1 } : {}),
+        };
         const res = await fetch(window.HMI.api("/api/crop"), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ filename: im.filename, cx: nx, cy: ny, crop_size: state.cropSize }),
+          body: JSON.stringify(payload),
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.description || data.message || "Error al recortar");
@@ -422,6 +466,39 @@ window.HMI.crop = (() => {
       }).catch(() => {});
     });
 
+    function toggleAmplify() {
+      state.amplify = el.amplifyToggle.checked;
+      el.amplifyWidthRow.style.display = state.amplify ? "flex" : "none";
+      el.amplifyHint.style.display = state.amplify ? "block" : "none";
+      if (state.lastNatural) renderReticleAtNatural(state.lastNatural.nx, state.lastNatural.ny);
+      fetch(window.HMI.api("/api/config"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ amplify: state.amplify, amplify_factor: state.amplifyFactor }),
+      }).catch(() => {});
+    }
+    function setAmplifyFactor(value) {
+      const parsed = Math.max(1, Number(value) || 1);
+      state.amplifyFactor = parsed;
+      el.amplifySlider.value = String(parsed);
+      el.amplifyFactorInput.value = String(parsed);
+      if (state.lastNatural) renderReticleAtNatural(state.lastNatural.nx, state.lastNatural.ny);
+    }
+    el.amplifyToggle.addEventListener("change", toggleAmplify);
+    el.amplifySlider.addEventListener("input", () => {
+      el.amplifyFactorInput.value = el.amplifySlider.value;
+      state.amplifyFactor = Number(el.amplifySlider.value);
+      if (state.lastNatural) renderReticleAtNatural(state.lastNatural.nx, state.lastNatural.ny);
+    });
+    el.amplifyFactorInput.addEventListener("change", () => {
+      setAmplifyFactor(Number(el.amplifyFactorInput.value));
+      fetch(window.HMI.api("/api/config"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ amplify: state.amplify, amplify_factor: state.amplifyFactor }),
+      }).catch(() => {});
+    });
+
     el.searchInput.addEventListener("input", () => {
       state.filterText = el.searchInput.value;
       renderGallery();
@@ -445,6 +522,14 @@ window.HMI.crop = (() => {
     state.cropSize = cfg.crop_size || 250;
     el.cropSlider.value = state.cropSize;
     el.cropSizeInput.value = state.cropSize;
+
+    state.amplify = Boolean(cfg.amplify);
+    el.amplifyToggle.checked = state.amplify;
+    el.amplifyWidthRow.style.display = state.amplify ? "flex" : "none";
+    el.amplifyHint.style.display = state.amplify ? "block" : "none";
+    state.amplifyFactor = Math.max(1, Number(cfg.amplify_factor) || 3);
+    el.amplifySlider.value = String(state.amplifyFactor);
+    el.amplifyFactorInput.value = String(state.amplifyFactor);
   }
 
   return { init, setImages, applyConfig, selectImage, currentImageMeta, updateProgress, syncWrap: syncWrapSize };

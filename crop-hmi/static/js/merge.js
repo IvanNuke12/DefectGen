@@ -35,6 +35,20 @@ window.HMI.merge = (() => {
 
   const { bus } = window.HMI;
 
+  // Parsea la respuesta como JSON de forma segura. Cuando el backend aborta
+  // (p. ej. 403 "No hay proyecto activo") devuelve una página HTML de error,
+  // que rompía res.json() con "Unexpected token '<'". Aquí se captura y se
+  // devuelve un objeto con un mensaje legible.
+  async function safeJson(res) {
+    const text = await res.text();
+    let data = null;
+    try { data = JSON.parse(text); } catch (_) { data = null; }
+    if (!data || typeof data !== "object") {
+      data = { ok: false, error: `No se pudo fusionar (HTTP ${res.status}). ¿Hay un proyecto abierto?` };
+    }
+    return data;
+  }
+
   function cacheBust(url) {
     if (!url) return url;
     const sep = url.includes("?") ? "&" : "?";
@@ -207,9 +221,9 @@ window.HMI.merge = (() => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ file: path }),
       });
-      const data = await res.json();
+      const data = await safeJson(res);
       if (!res.ok || !data.ok) {
-        bus.emit("status", (data && data.error) || "No se pudo fusionar la imagen.", true);
+        bus.emit("status", (data && data.error) || (data && data.message) || `No se pudo fusionar (HTTP ${res.status}).`, true);
         return;
       }
       showResult(data);
