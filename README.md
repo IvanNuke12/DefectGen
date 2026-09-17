@@ -59,6 +59,28 @@ y reinicia Docker.
 
 ## Puesta en marcha
 
+### Opción 1: Instalación rápida con scripts (recomendada)
+
+El repositorio incluye scripts automatizados que comprueban los requisitos del sistema (Docker, Compose v2 y soporte de GPU NVIDIA), preparan el archivo `.env` a partir de la plantilla, crean las carpetas de datos persistentes y construyen/levantan el stack completo:
+
+- **Windows**: Haz doble clic en `install.bat` (o ejecuta `.\install.bat` desde PowerShell / CMD).
+- **Linux / WSL2**:
+  ```bash
+  chmod +x install.sh start.sh stop.sh
+  ./install.sh
+  ```
+
+Una vez finalizada la construcción, abre **http://localhost/** en tu navegador.
+
+#### Control del servicio (uso habitual)
+
+- **Arrancar stack**: `start.bat` (Windows) o `./start.sh` (Linux).
+- **Detener stack**: `stop.bat` (Windows) o `./stop.sh` (Linux) — preserva todos los datos en `./projects`, `./crop-state` y `./hf-cache*`.
+
+---
+
+### Opción 2: Instalación manual paso a paso
+
 ```bash
 # 1. Configurar variables de entorno (token opcional)
 cp .env.example .env
@@ -154,6 +176,11 @@ Para exponer una app directamente (solo desarrollo), descomenta la sección
 ### Comandos útiles
 
 ```bash
+# Control con scripts
+./start.sh                             # o start.bat en Windows (arranca sin reconstruir)
+./stop.sh                              # o stop.bat en Windows (detiene contenedores)
+
+# Docker Compose directo
 docker compose ps                      # estado y healthchecks
 docker compose logs -f crop-hmi        # logs del HMI
 docker compose logs -f defectfill      # logs del entrenamiento
