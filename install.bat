@@ -30,8 +30,8 @@ docker run --rm --gpus all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi >nul 2
 if errorlevel 1 (
   echo [AVISO] No se pudo usar la GPU desde Docker.
   echo El HMI de preprocesado funcionara en CPU, pero el entrenamiento
-  echo requiere GPU NVIDIA + drivers + NVIDIA Container Toolkit (en WSL2
-  echo viene integrado con Docker Desktop si activas soporte WSL2-GPU).
+  echo requiere GPU NVIDIA, drivers y NVIDIA Container Toolkit.
+  echo En WSL2 viene integrado con Docker Desktop si activas el soporte de GPU.
 ) else (
   echo OK: GPU accesible desde Docker.
 )
@@ -39,7 +39,7 @@ if errorlevel 1 (
 echo [3/4] Preparando entorno (.env y carpetas de datos)...
 if not exist ".env" (
   copy ".env.example" ".env" >nul
-  echo Creado ".env" desde ".env.example" (rellena HF_TOKEN si quieres).
+  echo Creado ".env" desde ".env.example". Rellena HF_TOKEN si quieres.
 ) else (
   echo ".env" ya existe, no se toca.
 )
