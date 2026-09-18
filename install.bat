@@ -18,7 +18,7 @@ if errorlevel 1 (
 )
 docker compose version >nul 2>&1
 if errorlevel 1 (
-  echo [ERROR] No se encontro el plugin "docker compose" (Compose v2).
+  echo [ERROR] No se encontro el plugin "docker compose" - Compose v2.
   echo Actualiza Docker Desktop a una version reciente.
   pause
   exit /b 1

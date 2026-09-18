@@ -1,5 +1,8 @@
-# Normalización de fin de línea: todos los ficheros de texto en LF.
+# Normalización de fin de línea: todos los ficheros de texto en LF,
+# salvo los scripts de Windows (.bat), que cmd.exe exige en CRLF.
 * text=auto eol=lf
+*.bat text eol=crlf
+*.sh text eol=lf
 
 # Ficheros que deben conservarse exactamente.
 *.png binary
